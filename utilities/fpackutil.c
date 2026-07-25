@@ -334,6 +334,8 @@ int fp_info_hdu (fitsfile *infptr)
                         fp_msg (" tiled_gzip_2\n");
                     else if (! strncmp (val+1, "PLIO_1", 6))
                         fp_msg (" tiled_plio\n");
+                    else if (! strncmp (val+1, "JPEGLS_1", 8))
+                        fp_msg (" tiled_jpegls\n");
                     else if (! strncmp (val+1, "HCOMPRESS_1", 11))
                         fp_msg (" tiled_hcompress\n");
                     else

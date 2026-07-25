@@ -299,6 +299,7 @@ SERVICES PROVIDED HEREUNDER."
 #define PLIO_1      31
 #define HCOMPRESS_1 41
 #define BZIP2_1     51  /* not publicly supported; only for test purposes */
+#define JPEGLS_1    61
 #define NOCOMPRESS  -1
 
 #ifndef TRUE

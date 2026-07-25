@@ -91,6 +91,14 @@ int fp_get_param (int argc, char *argv[], fpstate *fpptr)
 		    } else
 			gottype++;
 */
+		} else if (argv[iarg][1] == 'j') {
+		    fpptr->comptype = JPEGLS_1;
+		    if (gottype) {
+			fp_msg ("Error: multiple compression flags\n");
+			fp_usage (); exit (-1);
+		    } else
+			gottype++;
+
 		} else if (argv[iarg][1] == 'h') {
 		    fpptr->comptype = HCOMPRESS_1;
 		    if (gottype) {
@@ -344,6 +352,10 @@ int fp_get_param (int argc, char *argv[], fpstate *fpptr)
 		    exit (-1);
 		}
 	    }
+	} else if (fpptr->comptype == JPEGLS_1) {
+	    /* Default tile size for JPEG-LS is 512x512 for better compression */
+	    fpptr->ntile[0] = (long) 512;
+	    fpptr->ntile[1] = (long) 512;
 	}
 
 	if (iarg >= argc) {
@@ -360,7 +372,7 @@ int fp_usage (void)
 {
 fp_msg ("usage: fpack ");
 fp_msg (
-"[-r|-h|-g|-p] [-w|-t <axes>] [-q <level>] [-s <scale>] [-n <noise>] -v <FITS>\n");
+"[-r|-h|-g|-p|-j] [-w|-t <axes>] [-q <level>] [-s <scale>] [-n <noise>] -v <FITS>\n");
 fp_msg ("more:   [-T] [-R] [-F] [-D] [-Y] [-O <file>] [-S] [-L] [-C] [-H] [-V] [-i2f]\n");
 return(0);
 }
@@ -388,6 +400,7 @@ fp_msg (" -r          Rice compression [default], or\n");
 fp_msg (" -h          Hcompress compression, or\n");
 fp_msg (" -g  or -g1  GZIP_1 (per-tile) compression, or\n");
 fp_msg (" -g2         GZIP_2 (per-tile) compression (with byte shuffling), or\n");
+fp_msg (" -j          JPEG-LS compression (lossless 8- or 16-bit integer images), or\n");
 /*
 fp_msg (" -b          BZIP2 (per-tile) compression, or\n");
 */

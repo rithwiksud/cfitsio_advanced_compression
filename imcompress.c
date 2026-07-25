@@ -2,10 +2,12 @@
 # include <stdlib.h>
 # include <string.h>
 # include <math.h>
+# include <stdint.h>
 # include <ctype.h>
 # include <time.h>
 # include <limits.h>
 # include "fitsio2.h"
+# include <charls/charls.h>
 
 #define NULL_VALUE -2147483647 /* value used to represent undefined pixels */
 #define ZERO_VALUE -2147483646 /* value used to represent zero-valued pixels */
@@ -48,6 +50,11 @@ int imcomp_convert_tile_tfloat(fitsfile *outfptr, long row, void *tiledata, long
 int imcomp_convert_tile_tdouble(fitsfile *outfptr, long row, void *tiledata, long tilelen,
     long tilenx, long tileny, int nullcheck, void *nullflagval, int nullval, int zbitpix, 
     double scale, double zero, int *intlength, int *flag, double *bscale, double *bzero, int *status);
+
+static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int bytes_per_sample,
+    unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny);
+static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size, int bytes_per_sample,
+    size_t pixel_count, void *dest);
 
 static int unquantize_i1r4(long row,
             unsigned char *input,         /* I - array of values to be converted     */
@@ -236,6 +243,93 @@ void bz_internal_error(int errcode)
     return;
 }
 /*--------------------------------------------------------------------------*/
+static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int bytes_per_sample,
+    unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny)
+{
+    charls_jpegls_encoder *encoder = charls_jpegls_encoder_create();
+    if (!encoder) {
+        ffpmsg("failed to create JPEG-LS encoder");
+        return MEMORY_ALLOCATION;
+    }
+
+    charls_frame_info frame = {0};
+
+    /* Use 2D tile dimensions if available, otherwise fall back to 1D */
+    if (tilenx > 0 && tileny > 0 && (size_t)(tilenx * tileny) == pixel_count) {
+        frame.width = (uint32_t) tilenx;
+        frame.height = (uint32_t) tileny;
+    } else if (tilenx > 0 && tileny == 0 && (size_t)tilenx == pixel_count) {
+        /* 1D case: single row */
+        frame.width = (uint32_t) tilenx;
+        frame.height = 1;
+    } else {
+        /* Fallback: treat as 1D array */
+        frame.width = (uint32_t) (pixel_count > 0 ? pixel_count : 1);
+        frame.height = 1;
+    }
+
+    frame.bits_per_sample = bytes_per_sample * 8;
+    frame.component_count = 1;
+
+    charls_jpegls_errc err = charls_jpegls_encoder_set_frame_info(encoder, &frame);
+    if (!err)
+        err = charls_jpegls_encoder_set_destination_buffer(encoder, dest, dest_capacity);
+
+    /* Encode source data directly (caller handles any required conversions) */
+    if (!err)
+        err = charls_jpegls_encoder_encode_from_buffer(encoder, source, pixel_count * (size_t)bytes_per_sample, 0);
+    if (!err)
+        err = charls_jpegls_encoder_get_bytes_written(encoder, bytes_written);
+
+    charls_jpegls_encoder_destroy(encoder);
+
+    if (err) {
+        ffpmsg("JPEG-LS encoding failed");
+        return DATA_COMPRESSION_ERR;
+    }
+
+    return 0;
+}
+/*--------------------------------------------------------------------------*/
+static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size, int bytes_per_sample,
+    size_t pixel_count, void *dest)
+{
+    charls_jpegls_decoder *decoder = charls_jpegls_decoder_create();
+    if (!decoder) {
+        ffpmsg("failed to create JPEG-LS decoder");
+        return MEMORY_ALLOCATION;
+    }
+
+    charls_jpegls_errc err = charls_jpegls_decoder_set_source_buffer(decoder, source, source_size);
+    if (!err)
+        err = charls_jpegls_decoder_read_header(decoder);
+
+    /* Validate header matches expected parameters */
+    if (!err) {
+        charls_frame_info frame;
+        err = charls_jpegls_decoder_get_frame_info(decoder, &frame);
+        if (!err) {
+            if (frame.component_count != 1 || frame.bits_per_sample != bytes_per_sample * 8 ||
+                (size_t)frame.width * (size_t)frame.height != pixel_count) {
+                err = CHARLS_JPEGLS_ERRC_INVALID_ARGUMENT;
+            }
+        }
+    }
+
+    /* Decode directly to output buffer (caller handles any required conversions) */
+    if (!err)
+        err = charls_jpegls_decoder_decode_to_buffer(decoder, dest, pixel_count * (size_t)bytes_per_sample, 0);
+
+    charls_jpegls_decoder_destroy(decoder);
+
+    if (err) {
+        ffpmsg("JPEG-LS decoding failed");
+        return DATA_DECOMPRESSION_ERR;
+    }
+
+    return 0;
+}
+/*--------------------------------------------------------------------------*/
 int fits_set_compression_type(fitsfile *fptr,  /* I - FITS file pointer     */
        int ctype,    /* image compression type code;                        */
                      /* allowed values: RICE_1, GZIP_1, GZIP_2, PLIO_1,     */
@@ -249,12 +343,13 @@ int fits_set_compression_type(fitsfile *fptr,  /* I - FITS file pointer     */
    table column.
 */
 
-    if (ctype != RICE_1 && 
-        ctype != GZIP_1 && 
-        ctype != GZIP_2 && 
-        ctype != PLIO_1 && 
-        ctype != HCOMPRESS_1 && 
-        ctype != BZIP2_1 && 
+    if (ctype != RICE_1 &&
+        ctype != GZIP_1 &&
+        ctype != GZIP_2 &&
+        ctype != PLIO_1 &&
+        ctype != HCOMPRESS_1 &&
+        ctype != BZIP2_1 &&
+        ctype != JPEGLS_1 &&
         ctype != NOCOMPRESS &&
 	ctype != 0)
     {
@@ -1034,7 +1129,34 @@ int imcomp_init_table(fitsfile *outfptr,
     /* reset default tile dimensions too if required */
     memcpy(actual_tilesize, outfptr->Fptr->request_tilesize, MAX_COMPRESS_DIM * sizeof(long));
 
-    if ((outfptr->Fptr)->request_compress_type == HCOMPRESS_1) {
+    if ((outfptr->Fptr)->request_compress_type == JPEGLS_1) {
+        /* JPEG-LS works best with 2D tiles. Default to 512x512 if not specified.
+           This allows JPEG-LS to exploit spatial correlations in the image. */
+        
+        if (actual_tilesize[0] <= 0) {
+            /* First dimension: use 512 or full width if image is smaller */
+            actual_tilesize[0] = (naxes[0] < 512) ? naxes[0] : 512;
+        }
+        
+        if (naxis >= 2) {
+            if (actual_tilesize[1] == 0) {
+                /* Second dimension: use 512 or full height if image is smaller */
+                actual_tilesize[1] = (naxes[1] < 512) ? naxes[1] : 512;
+            } else if (actual_tilesize[1] < 0) {
+                /* Negative value means use full dimension */
+                actual_tilesize[1] = naxes[1];
+            }
+        }
+        
+        /* For higher dimensions, default to 1 */
+        for (ii = 2; ii < naxis; ii++) {
+            if (actual_tilesize[ii] == 0) {
+                actual_tilesize[ii] = 1;
+            } else if (actual_tilesize[ii] < 0) {
+                actual_tilesize[ii] = naxes[ii];
+            }
+        }
+    } else if ((outfptr->Fptr)->request_compress_type == HCOMPRESS_1) {
          
          /* Tiles must ultimately have 2 (and only 2) dimensions, each with
              at least 4 pixels. First catch the case where the image
@@ -1246,6 +1368,10 @@ int imcomp_init_table(fitsfile *outfptr,
     {
         strcpy(zcmptype, "BZIP2_1");
     }
+    else if ((outfptr->Fptr)->request_compress_type == JPEGLS_1)
+    {
+        strcpy(zcmptype, "JPEGLS");
+    }
     else if ((outfptr->Fptr)->request_compress_type == PLIO_1)
     {
         strcpy(zcmptype, "PLIO_1");
@@ -1397,6 +1523,18 @@ int imcomp_init_table(fitsfile *outfptr,
         ffpkyj (outfptr, "ZVAL2", (long) (outfptr->Fptr)->request_hcomp_smooth,
 			"HCOMPRESS smooth option", status);
     }
+    else if ((outfptr->Fptr)->request_compress_type == JPEGLS_1)
+    {
+        ffpkys (outfptr, "ZNAME1", "BYTEPIX",
+            "bytes per pixel (1, 2, or 4)", status);
+
+        if (bitpix == BYTE_IMG)
+            ffpkyj (outfptr, "ZVAL1", 1, "bytes per pixel", status);
+        else if (bitpix == SHORT_IMG)
+            ffpkyj (outfptr, "ZVAL1", 2, "bytes per pixel", status);
+        else
+            ffpkyj (outfptr, "ZVAL1", 4, "bytes per pixel", status);
+    }
 
     /* Write the BSCALE and BZERO keywords, if an unsigned integer image */
     if (inbitpix == USHORT_IMG)
@@ -1461,6 +1599,11 @@ int imcomp_calc_max_elem (int comptype, int nx, int zbitpix, int blocksize)
 	   buffer of size 1% larger than the uncompressed data, plus 600 bytes */
 
             return((int) (nx * 1.01 * zbitpix / 8. + 601.));
+    }
+     else if (comptype == JPEGLS_1)
+    {
+        int bytes = (abs(zbitpix) == 16) ? 2 : 1;
+        return(nx * bytes + 1024);
     }
      else if (comptype == HCOMPRESS_1)
     {
@@ -1543,6 +1686,7 @@ int imcomp_compress_image (fitsfile *infptr, fitsfile *outfptr, int *status)
 	     (outfptr->Fptr)->compress_type == GZIP_1  ||
 	     (outfptr->Fptr)->compress_type == GZIP_2  ||
 	     (outfptr->Fptr)->compress_type == BZIP2_1 ||
+             (outfptr->Fptr)->compress_type == JPEGLS_1 ||
              (outfptr->Fptr)->compress_type == NOCOMPRESS) {
 	    /* only need  buffer of I*2 pixels for gzip, bzip2, and Rice */
 
@@ -1559,7 +1703,8 @@ int imcomp_compress_image (fitsfile *infptr, fitsfile *outfptr, int *status)
         if ( (outfptr->Fptr)->compress_type == RICE_1  ||
 	     (outfptr->Fptr)->compress_type == BZIP2_1 ||
 	     (outfptr->Fptr)->compress_type == GZIP_1  ||
-	     (outfptr->Fptr)->compress_type == GZIP_2) {
+	     (outfptr->Fptr)->compress_type == GZIP_2 ||
+             (outfptr->Fptr)->compress_type == JPEGLS_1) {
 	    /* only need  buffer of I*1 pixels for gzip, bzip2, and Rice */
 
             tiledata = (double*) malloc (maxtilelen);	
@@ -2078,6 +2223,119 @@ int imcomp_compress_tile (fitsfile *outfptr,
                      bzlen, (unsigned char *) cbuf, status);
 
         /* =========================================================================== */
+        } else if ( (outfptr->Fptr)->compress_type == JPEGLS_1) {
+            size_t pixel_count = (size_t) tilelen;
+            size_t bytes_written = 0;
+            int bytes_per_sample = intlength;
+
+            if (bytes_per_sample == 1) {
+                const unsigned char *src = (const unsigned char *) idata;
+                *status = imcomp_jpegls_encode(src, pixel_count, bytes_per_sample,
+                    (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny);
+            } else if (bytes_per_sample == 2) {
+                uint16_t *tmpbuf = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+                if (!tmpbuf) {
+                    free(cbuf);
+                    ffpmsg("Memory allocation failure (JPEG-LS encode).");
+                    return(*status = MEMORY_ALLOCATION);
+                }
+
+                /* Convert int16 to uint16 via arithmetic offset for FITS compatibility */
+                short *src = (short *) idata;
+                for (ii = 0; ii < (long) pixel_count; ii++) {
+                    tmpbuf[ii] = (uint16_t) ((int) src[ii] + 0x8000);  /* add 2^15 */
+                }
+
+                *status = imcomp_jpegls_encode(tmpbuf, pixel_count, bytes_per_sample,
+                    (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny);
+                free(tmpbuf);
+            } else if (bytes_per_sample == 4) {
+                const int *src = (const int *) idata;
+                uint16_t *upper = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+                uint16_t *lower = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+                size_t upper_written = 0;
+                size_t lower_written = 0;
+
+                if (!upper || !lower) {
+                    free(upper);
+                    free(lower);
+                    free(cbuf);
+                    ffpmsg("Memory allocation failure (JPEG-LS encode).");
+                    return(*status = MEMORY_ALLOCATION);
+                }
+
+                for (ii = 0; ii < (long) pixel_count; ii++) {
+                    uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL);
+                    upper[ii] = (uint16_t)(uval >> 16);
+                    lower[ii] = (uint16_t)(uval & 0xFFFFU);
+                }
+
+                if (clen <= 2) {
+                    free(upper);
+                    free(lower);
+                    free(cbuf);
+                    ffpmsg("JPEG-LS buffer too small for 32-bit encoding");
+                    return(*status = DATA_COMPRESSION_ERR);
+                }
+
+                unsigned char *payload = ((unsigned char *) cbuf) + 2;
+                size_t remaining = clen - 2;
+
+                *status = imcomp_jpegls_encode(upper, pixel_count, 2,
+                    payload, remaining, &upper_written, tilenx, tileny);
+                if (!*status) {
+                    if (upper_written > remaining) {
+                        *status = DATA_COMPRESSION_ERR;
+                    } else {
+                        payload += upper_written;
+                        remaining -= upper_written;
+                        *status = imcomp_jpegls_encode(lower, pixel_count, 2,
+                            payload, remaining, &lower_written, tilenx, tileny);
+                    }
+                }
+
+                free(upper);
+                free(lower);
+
+                if (*status) {
+                    free(cbuf);
+                    if (*status == DATA_COMPRESSION_ERR)
+                        ffpmsg("JPEG-LS encoding failed for 32-bit tiles");
+                    return(*status);
+                }
+
+                if (upper_written > UINT16_MAX) {
+                    free(cbuf);
+                    ffpmsg("JPEG-LS encoded upper segment too large for 2-byte header");
+                    return(*status = DATA_COMPRESSION_ERR);
+                }
+
+                /* Use 2-byte header (big-endian) for Astropy compatibility */
+                unsigned char *lenptr = (unsigned char *) cbuf;
+                uint16_t upper_len16 = (uint16_t) upper_written;
+
+                lenptr[0] = (unsigned char)((upper_len16 >> 8) & 0xFF);
+                lenptr[1] = (unsigned char)(upper_len16 & 0xFF);
+
+                bytes_written = 2 + upper_written + lower_written;
+            } else {
+                free(cbuf);
+                ffpmsg("JPEG-LS only supports 8, 16, or split 32-bit integer tiles");
+                return(*status = DATA_COMPRESSION_ERR);
+            }
+
+            if (*status) {
+                free(cbuf);
+                return(*status);
+            }
+
+            nelem = (int) bytes_written;
+
+            /* Write the compressed byte stream. */
+            ffpclb(outfptr, (outfptr->Fptr)->cn_compressed, row, 1,
+                     nelem, (unsigned char *) cbuf, status);
+
+        /* =========================================================================== */
         }  else if ( (outfptr->Fptr)->compress_type == HCOMPRESS_1)     {
 	    /*
 	      if hcompscale is positive, then we have to multiply
@@ -2304,7 +2562,8 @@ int imcomp_convert_tile_tshort(
        idata = (int *) tiledata;
        
        if ( (outfptr->Fptr)->compress_type == RICE_1 || (outfptr->Fptr)->compress_type == GZIP_1
-         || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1 ) 
+         || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1
+         || (outfptr->Fptr)->compress_type == JPEGLS_1 ) 
        {
            /* don't have to convert to int if using gzip, bzip2 or Rice compression */
            *intlength = 2;
@@ -2342,7 +2601,7 @@ int imcomp_convert_tile_tshort(
            *intlength = 4;
            if (zero == 0. && actual_bzero == 32768.) {
              /* Here we are compressing unsigned 16-bit integers that have */
-	     /* been offset by -32768 using the standard FITS convention. */
+	     /* been offset by -2^15 using the standard FITS convention. */
 	     /* Since PLIO cannot deal with negative values, we must apply */
 	     /* the shift of 32786 to the values to make them all positive. */
 	     /* The inverse negative shift will be applied in */
@@ -2354,12 +2613,12 @@ int imcomp_convert_tile_tshort(
 	            if (sbuff[ii] == (short) flagval)
 		       idata[ii] = nullval;
                     else
-                       idata[ii] = (int) sbuff[ii] + 32768;
+                       idata[ii] = (int) sbuff[ii] + 0x8000;  /* add 2^15 */
                }
              } else {  
                  /* have to convert sbuff to an I*4 array, in place */
                  /* sbuff must have been allocated large enough to do this */
-                 fits_short_to_int_inplace(sbuff, tilelen, 32768, status);
+                 fits_short_to_int_inplace(sbuff, tilelen, 0x8000, status);  /* add 2^15 */
              }
            } else {
 	     /* This is not an unsigned 16-bit integer array, so process normally */
@@ -2419,12 +2678,13 @@ int imcomp_convert_tile_tushort(
        idata = (int *) tiledata;
 
        if ((outfptr->Fptr)->compress_type == RICE_1 || (outfptr->Fptr)->compress_type == GZIP_1
-        || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1) 
+        || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1
+        || (outfptr->Fptr)->compress_type == JPEGLS_1) 
        {
            /* don't have to convert to int if using gzip, bzip2, or Rice compression */
            *intlength = 2;
 
-          /* offset the unsigned value by -32768 to a signed short value. */
+          /* offset the unsigned value by -2^15 to a signed short value. */
 	  /* It is more efficient to do this by just flipping the most significant of the 16 bits */
 
            if (nullcheck == 1) {
@@ -2437,7 +2697,7 @@ int imcomp_convert_tile_tushort(
 		       usbuff[ii] =  (usbuff[ii]) ^ 0x8000;
                }
            } else {
-               /* just offset the pixel values by 32768 (by flipping the MSB */
+               /* just offset the pixel values by 2^15 (by flipping the MSB) */
                for (ii = tilelen - 1; ii >= 0; ii--)
 		       usbuff[ii] =  (usbuff[ii]) ^ 0x8000;
            }
@@ -2446,22 +2706,22 @@ int imcomp_convert_tile_tushort(
            *intlength = 4;
 
            if (nullcheck == 1) {
-               /* offset the pixel values by 32768, and */
+               /* offset the pixel values by 2^15, and */
                /* reset pixels equal to flagval to nullval */
                flagval = *(unsigned short *) (nullflagval);
                for (ii = tilelen - 1; ii >= 0; ii--) {
 	            if (usbuff[ii] == (unsigned short) flagval)
 		       idata[ii] = nullval;
                     else
-		       idata[ii] = ((int) usbuff[ii]) - 32768;
+		       idata[ii] = ((int) usbuff[ii]) - 0x8000;  /* subtract 2^15 */
                }
            } else {  /* just do the data type conversion to int */
-               /* for HCOMPRESS we need to simply subtract 32768 */
+               /* for HCOMPRESS we need to simply subtract 2^15 */
                /* for PLIO, have to convert usbuff to an I*4 array, in place */
                /* usbuff must have been allocated large enough to do this */
 
                if ((outfptr->Fptr)->compress_type == HCOMPRESS_1) {
-                    fits_ushort_to_int_inplace(usbuff, tilelen, -32768, status);
+                    fits_ushort_to_int_inplace(usbuff, tilelen, -0x8000, status);  /* subtract 2^15 */
                } else {
                     fits_ushort_to_int_inplace(usbuff, tilelen, 0, status);
                }
@@ -2610,7 +2870,8 @@ int imcomp_convert_tile_tbyte(
        usbbuff = (unsigned char *) tiledata;
 
        if ( (outfptr->Fptr)->compress_type == RICE_1 || (outfptr->Fptr)->compress_type == GZIP_1
-         || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1 ) 
+         || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1
+         || (outfptr->Fptr)->compress_type == JPEGLS_1 ) 
        {
            /* don't have to convert to int if using gzip, bzip2, or Rice compression */
            *intlength = 1;
@@ -2683,7 +2944,8 @@ int imcomp_convert_tile_tsbyte(
        sbbuff = (signed char *) tiledata;
 
        if ( (outfptr->Fptr)->compress_type == RICE_1 || (outfptr->Fptr)->compress_type == GZIP_1
-         || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1 ) 
+         || (outfptr->Fptr)->compress_type == GZIP_2 || (outfptr->Fptr)->compress_type == BZIP2_1
+         || (outfptr->Fptr)->compress_type == JPEGLS_1 ) 
        {
            /* don't have to convert to int if using gzip, bzip2 or Rice compression */
            *intlength = 1;
@@ -3609,6 +3871,14 @@ int fits_write_compressed_img(fitsfile *fptr,   /* I - FITS file pointer     */
         else if ((fptr->Fptr)->zbitpix == SHORT_IMG)
             buffpixsiz = maxvalue(buffpixsiz, 2);
         else 
+            buffpixsiz = maxvalue(buffpixsiz, 4);
+    }
+    else if ( (fptr->Fptr)->compress_type == JPEGLS_1) {
+        if ((fptr->Fptr)->zbitpix == BYTE_IMG)
+            buffpixsiz = maxvalue(buffpixsiz, 1);
+        else if ((fptr->Fptr)->zbitpix == SHORT_IMG)
+            buffpixsiz = maxvalue(buffpixsiz, 2);
+        else
             buffpixsiz = maxvalue(buffpixsiz, 4);
     }
     else
@@ -5286,6 +5556,8 @@ int imcomp_get_compressed_image_par(fitsfile *infptr, int *status)
         (infptr->Fptr)->compress_type = GZIP_2;
     else if (!FSTRCMP(value, "BZIP2_1") )
         (infptr->Fptr)->compress_type = BZIP2_1;
+    else if (!FSTRCMP(value, "JPEGLS_1") || !FSTRCMP(value, "JPEGLS") )
+        (infptr->Fptr)->compress_type = JPEGLS_1;
     else if (!FSTRCMP(value, "PLIO_1") )
         (infptr->Fptr)->compress_type = PLIO_1;
     else if (!FSTRCMP(value, "NOCOMPRESS") )
@@ -6272,6 +6544,10 @@ int imcomp_decompress_tile (fitsfile *infptr,
 	       (infptr->Fptr)->rice_bytepix == 1) {
 
            idatalen = tilelen * sizeof(char); /* 1 byte per pixel */
+    } else if ( (infptr->Fptr)->compress_type == JPEGLS_1 &&
+               (infptr->Fptr)->zbitpix == BYTE_IMG) {
+
+           idatalen = tilelen * sizeof(char); /* 1 byte per pixel */
     } else if ( ( (infptr->Fptr)->compress_type == GZIP_1  ||
                   (infptr->Fptr)->compress_type == GZIP_2  ||
                   (infptr->Fptr)->compress_type == BZIP2_1 ) &&
@@ -6281,6 +6557,10 @@ int imcomp_decompress_tile (fitsfile *infptr,
     } else if ( (infptr->Fptr)->compress_type == RICE_1 &&
                (infptr->Fptr)->zbitpix == SHORT_IMG && 
 	       (infptr->Fptr)->rice_bytepix == 2) {
+
+           idatalen = tilelen * sizeof(short); /* 2 bytes per pixel */
+    } else if ( (infptr->Fptr)->compress_type == JPEGLS_1 &&
+               (infptr->Fptr)->zbitpix == SHORT_IMG) {
 
            idatalen = tilelen * sizeof(short); /* 2 bytes per pixel */
     } else if ( ( (infptr->Fptr)->compress_type == GZIP_1  ||
@@ -6438,6 +6718,116 @@ int imcomp_decompress_tile (fitsfile *infptr,
         }
 
     /* ************************************************************* */
+    } else if ((infptr->Fptr)->compress_type == JPEGLS_1) {
+
+        int bytes_per_sample;
+        size_t pixel_count = (size_t) tilelen;
+
+        if ((infptr->Fptr)->zbitpix == BYTE_IMG)
+            bytes_per_sample = 1;
+        else if ((infptr->Fptr)->zbitpix == SHORT_IMG)
+            bytes_per_sample = 2;
+        else if ((infptr->Fptr)->zbitpix == LONG_IMG ||
+                 (infptr->Fptr)->zbitpix == FLOAT_IMG ||
+                 (infptr->Fptr)->zbitpix == DOUBLE_IMG)
+            bytes_per_sample = 4;
+        else {
+            ffpmsg("unsupported BITPIX for JPEG-LS compressed tile");
+            free(idata);
+            free(cbuf);
+            return (*status = DATA_DECOMPRESSION_ERR);
+        }
+
+        if (bytes_per_sample == 1) {
+            *status = imcomp_jpegls_decode(cbuf, (size_t) nelemll, bytes_per_sample,
+                pixel_count, idata);
+            tiledatatype = TBYTE;
+        } else if (bytes_per_sample == 2) {
+            uint16_t *tmpbuf = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+            if (!tmpbuf) {
+                free(idata);
+                free(cbuf);
+                ffpmsg("Memory allocation failure (JPEG-LS decode).");
+                return (*status = MEMORY_ALLOCATION);
+            }
+
+            *status = imcomp_jpegls_decode(cbuf, (size_t) nelemll, bytes_per_sample,
+                pixel_count, tmpbuf);
+            if (*status == 0) {
+                short *dest = (short *) idata;
+                for (ii = 0; ii < tilelen; ii++)
+                    dest[ii] = (short) ((int) tmpbuf[ii] - 0x8000);  /* subtract 2^15 */
+            }
+            free(tmpbuf);
+            tiledatatype = TSHORT;
+        } else { /* bytes_per_sample == 4 */
+            const unsigned char *src = cbuf;
+            size_t total_bytes = (size_t) nelemll;
+            uint16_t upper_len16;
+            size_t lower_len;
+            uint16_t *upper_tmp = NULL;
+            uint16_t *lower_tmp = NULL;
+
+            /* 2-byte header format for Astropy compatibility */
+            if (total_bytes < 2) {
+                free(idata);
+                free(cbuf);
+                ffpmsg("Invalid JPEG-LS stream for 32-bit tile");
+                return (*status = DATA_DECOMPRESSION_ERR);
+            }
+
+            /* Read 2-byte big-endian upper length */
+            upper_len16 = ((uint16_t)src[0] << 8) | (uint16_t)src[1];
+
+            /* Lower length is inferred from remaining bytes */
+            if ((size_t)upper_len16 > total_bytes - 2) {
+                free(idata);
+                free(cbuf);
+                ffpmsg("Corrupted JPEG-LS 32-bit tile: upper length exceeds data");
+                return (*status = DATA_DECOMPRESSION_ERR);
+            }
+            lower_len = total_bytes - 2 - (size_t)upper_len16;
+
+            const unsigned char *upper_src = src + 2;
+            const unsigned char *lower_src = upper_src + upper_len16;
+
+            upper_tmp = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+            lower_tmp = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+            if (!upper_tmp || !lower_tmp) {
+                free(upper_tmp);
+                free(lower_tmp);
+                free(idata);
+                free(cbuf);
+                ffpmsg("Memory allocation failure (JPEG-LS decode).");
+                return (*status = MEMORY_ALLOCATION);
+            }
+
+            *status = imcomp_jpegls_decode(upper_src, (size_t) upper_len16, 2,
+                pixel_count, upper_tmp);
+            if (*status == 0) {
+                *status = imcomp_jpegls_decode(lower_src, lower_len, 2,
+                    pixel_count, lower_tmp);
+            }
+            if (*status == 0) {
+                int *dest = idata;
+                for (ii = 0; ii < tilelen; ii++) {
+                    uint32_t uval = ((uint32_t)upper_tmp[ii] << 16) |
+                                    (uint32_t)lower_tmp[ii];
+                    dest[ii] = (int)((int64_t) uval - 0x80000000ULL);
+                }
+            }
+
+            free(upper_tmp);
+            free(lower_tmp);
+            tiledatatype = TINT;
+        }
+
+        if (*status) {
+            free(idata);
+            free(cbuf);
+            return (*status);
+        }
+
     } else if ((infptr->Fptr)->compress_type == BZIP2_1) {
 
 /*  BZIP2 is not supported in the public release; this is only for test purposes 

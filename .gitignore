@@ -70,6 +70,14 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+# macOS
+.DS_Store
+
+# Local test binaries
+test_compression_comparison
+test_jpegls
+test_jpegls_compression
+
 # CFITSIO misc
 Makefile
 config.log
