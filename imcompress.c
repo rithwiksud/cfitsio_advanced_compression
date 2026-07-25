@@ -1687,8 +1687,8 @@ int imcomp_calc_max_elem (int comptype, int nx, int zbitpix, int blocksize)
             return(nx * 2 + 1024);
         else
             /* 32-bit tiles are split into two 16-bit planes, each encoded as
-               its own JPEG-LS stream, preceded by a 2-byte length header. */
-            return(nx * 4 + 1024 + 2);
+               its own JPEG-LS stream, preceded by a 4-byte length header. */
+            return(nx * 4 + 1024 + 4);
     }
      else if (comptype == HCOMPRESS_1)
     {
@@ -2372,7 +2372,7 @@ int imcomp_compress_tile (fitsfile *outfptr,
                         lower[ii] = (uint16_t)(uval & 0xFFFFU);
                     }
 
-                    if (clen <= 2) {
+                    if (clen <= 4) {
                         free(upper);
                         free(lower);
                         free(cbuf);
@@ -2380,8 +2380,8 @@ int imcomp_compress_tile (fitsfile *outfptr,
                         return(*status = DATA_COMPRESSION_ERR);
                     }
 
-                    unsigned char *payload = ((unsigned char *) cbuf) + 2;
-                    size_t remaining = clen - 2;
+                    unsigned char *payload = ((unsigned char *) cbuf) + 4;
+                    size_t remaining = clen - 4;
 
                     /* The upper plane MUST be encoded losslessly: an error of
                        1 there becomes 65536 in the reconstructed 32-bit value.
@@ -2402,20 +2402,27 @@ int imcomp_compress_tile (fitsfile *outfptr,
                     free(lower);
 
                     if (!*status) {
-                        if (upper_written > UINT16_MAX) {
+                        /* 4-byte length gives ~4 GB of headroom per plane.
+                           Every other limit in the stack (the int nelem below,
+                           imcomp_calc_max_elem's int return, the 1PB column
+                           descriptor) binds long before this can, but check
+                           anyway so overflow can never truncate silently. */
+                        if (upper_written > 0xFFFFFFFFu) {
                             free(cbuf);
-                            ffpmsg("JPEG-LS encoded upper segment too large for 2-byte header");
+                            ffpmsg("JPEG-LS encoded upper segment too large for 4-byte header");
                             return(*status = DATA_COMPRESSION_ERR);
                         }
 
-                        /* Use 2-byte header (big-endian) for Astropy compatibility */
+                        /* 4-byte big-endian length of the upper-plane stream */
                         unsigned char *lenptr = (unsigned char *) cbuf;
-                        uint16_t upper_len16 = (uint16_t) upper_written;
+                        uint32_t upper_len32 = (uint32_t) upper_written;
 
-                        lenptr[0] = (unsigned char)((upper_len16 >> 8) & 0xFF);
-                        lenptr[1] = (unsigned char)(upper_len16 & 0xFF);
+                        lenptr[0] = (unsigned char)((upper_len32 >> 24) & 0xFF);
+                        lenptr[1] = (unsigned char)((upper_len32 >> 16) & 0xFF);
+                        lenptr[2] = (unsigned char)((upper_len32 >> 8) & 0xFF);
+                        lenptr[3] = (unsigned char)(upper_len32 & 0xFF);
 
-                        bytes_written = 2 + upper_written + lower_written;
+                        bytes_written = 4 + upper_written + lower_written;
                     }
                 } else {
                     free(cbuf);
@@ -2430,7 +2437,7 @@ int imcomp_compress_tile (fitsfile *outfptr,
                 {   /* Grow to the size JPEG-LS can never exceed, then retry. */
                     void *newbuf;
                     size_t bigger = (bytes_per_sample == 4)
-                        ? 2 * imcomp_jpegls_max_encoded_size(pixel_count, 2) + 2
+                        ? 2 * imcomp_jpegls_max_encoded_size(pixel_count, 2) + 4
                         : imcomp_jpegls_max_encoded_size(pixel_count, bytes_per_sample);
 
                     if (bigger <= clen)
@@ -6898,33 +6905,33 @@ int imcomp_decompress_tile (fitsfile *infptr,
         } else { /* bytes_per_sample == 4 */
             const unsigned char *src = cbuf;
             size_t total_bytes = (size_t) nelemll;
-            uint16_t upper_len16;
+            uint32_t upper_len32;
             size_t lower_len;
             uint16_t *upper_tmp = NULL;
             uint16_t *lower_tmp = NULL;
 
-            /* 2-byte header format for Astropy compatibility */
-            if (total_bytes < 2) {
+            /* 4-byte big-endian length header, then the two 16-bit planes */
+            if (total_bytes < 4) {
                 free(idata);
                 free(cbuf);
                 ffpmsg("Invalid JPEG-LS stream for 32-bit tile");
                 return (*status = DATA_DECOMPRESSION_ERR);
             }
 
-            /* Read 2-byte big-endian upper length */
-            upper_len16 = ((uint16_t)src[0] << 8) | (uint16_t)src[1];
+            upper_len32 = ((uint32_t)src[0] << 24) | ((uint32_t)src[1] << 16) |
+                          ((uint32_t)src[2] << 8)  |  (uint32_t)src[3];
 
             /* Lower length is inferred from remaining bytes */
-            if ((size_t)upper_len16 > total_bytes - 2) {
+            if ((size_t)upper_len32 > total_bytes - 4) {
                 free(idata);
                 free(cbuf);
                 ffpmsg("Corrupted JPEG-LS 32-bit tile: upper length exceeds data");
                 return (*status = DATA_DECOMPRESSION_ERR);
             }
-            lower_len = total_bytes - 2 - (size_t)upper_len16;
+            lower_len = total_bytes - 4 - (size_t)upper_len32;
 
-            const unsigned char *upper_src = src + 2;
-            const unsigned char *lower_src = upper_src + upper_len16;
+            const unsigned char *upper_src = src + 4;
+            const unsigned char *lower_src = upper_src + upper_len32;
 
             upper_tmp = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
             lower_tmp = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
@@ -6937,7 +6944,7 @@ int imcomp_decompress_tile (fitsfile *infptr,
                 return (*status = MEMORY_ALLOCATION);
             }
 
-            *status = imcomp_jpegls_decode(upper_src, (size_t) upper_len16, 2,
+            *status = imcomp_jpegls_decode(upper_src, (size_t) upper_len32, 2,
                 pixel_count, upper_tmp);
             if (*status == 0) {
                 *status = imcomp_jpegls_decode(lower_src, lower_len, 2,
