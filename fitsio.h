@@ -404,6 +404,7 @@ typedef struct      /* structure used to store basic FITS file information */
     int request_huge_hdu;          /* use '1Q' rather then '1P' variable length arrays */
     float request_hcomp_scale;     /* requested HCOMPRESS scale factor */
     int request_hcomp_smooth;      /* requested HCOMPRESS smooth parameter */
+    int request_jpegls_maxerr;     /* requested JPEG-LS max error (0 = lossless) */
 
     /* these record the actual options that were used when the image was compressed */
     int compress_type;      /* type of compression algorithm */
@@ -439,6 +440,7 @@ typedef struct      /* structure used to store basic FITS file information */
     int rice_bytepix;       /* 2nd compression parameter:   Rice bytes/pixel */
     float hcomp_scale;      /* 1st hcompress compression parameter */
     int hcomp_smooth;       /* 2nd hcompress compression parameter */
+    int jpegls_maxerr;      /* JPEG-LS max error, NEAR (0 = lossless) */
 
     int  *tilerow;          /* row number of the array of uncompressed tiledata */
     long *tiledatasize;     /* length of the array of tile data in bytes */
@@ -2031,6 +2033,7 @@ int CFITS_API fits_set_noise_bits(fitsfile *fptr, int noisebits, int *status);
 int CFITS_API fits_set_quantize_level(fitsfile *fptr, float qlevel, int *status);
 int CFITS_API fits_set_hcomp_scale(fitsfile *fptr, float scale, int *status);
 int CFITS_API fits_set_hcomp_smooth(fitsfile *fptr, int smooth, int *status);
+int CFITS_API fits_set_jpegls_maxerr(fitsfile *fptr, int maxerr, int *status);
 int CFITS_API fits_set_quantize_method(fitsfile *fptr, int method, int *status);
 int CFITS_API fits_set_quantize_dither(fitsfile *fptr, int dither, int *status);
 int CFITS_API fits_set_dither_seed(fitsfile *fptr, int seed, int *status);
@@ -2045,6 +2048,7 @@ int CFITS_API fits_get_quantize_level(fitsfile *fptr, float *qlevel, int *status
 int CFITS_API fits_get_noise_bits(fitsfile *fptr, int *noisebits, int *status);
 int CFITS_API fits_get_hcomp_scale(fitsfile *fptr, float *scale, int *status);
 int CFITS_API fits_get_hcomp_smooth(fitsfile *fptr, int *smooth, int *status);
+int CFITS_API fits_get_jpegls_maxerr(fitsfile *fptr, int *maxerr, int *status);
 int CFITS_API fits_get_dither_seed(fitsfile *fptr, int *seed, int *status);
 
 int CFITS_API fits_img_compress(fitsfile *infptr, fitsfile *outfptr, int *status);

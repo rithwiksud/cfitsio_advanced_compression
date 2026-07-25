@@ -52,9 +52,11 @@ int imcomp_convert_tile_tdouble(fitsfile *outfptr, long row, void *tiledata, lon
     double scale, double zero, int *intlength, int *flag, double *bscale, double *bzero, int *status);
 
 static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int bytes_per_sample,
-    unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny);
+    unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny,
+    int max_err, int *dest_too_small);
 static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size, int bytes_per_sample,
     size_t pixel_count, void *dest);
+static size_t imcomp_jpegls_max_encoded_size(size_t pixel_count, int bytes_per_sample);
 
 static int unquantize_i1r4(long row,
             unsigned char *input,         /* I - array of values to be converted     */
@@ -243,10 +245,28 @@ void bz_internal_error(int errcode)
     return;
 }
 /*--------------------------------------------------------------------------*/
-static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int bytes_per_sample,
-    unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny)
+static size_t imcomp_jpegls_max_encoded_size(size_t pixel_count, int bytes_per_sample)
 {
-    charls_jpegls_encoder *encoder = charls_jpegls_encoder_create();
+    /* Worst-case encoded size for one JPEG-LS stream.  Mirrors CharLS's own
+       charls_jpegls_encoder_get_estimated_destination_size(): JPEG-LS may
+       expand incompressible data, bounded by the input size + 6.25%, plus a
+       fixed allowance for the JPEG headers. */
+    size_t raw = pixel_count * (size_t) bytes_per_sample;
+    return raw + (raw / 16) + 1024;
+}
+/*--------------------------------------------------------------------------*/
+static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int bytes_per_sample,
+    unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny,
+    int max_err, int *dest_too_small)
+{
+    charls_jpegls_encoder *encoder;
+
+    /* Distinguishes "buffer was too small" (caller may retry with a larger
+       buffer) from a genuine encoding failure. */
+    if (dest_too_small)
+        *dest_too_small = 0;
+
+    encoder = charls_jpegls_encoder_create();
     if (!encoder) {
         ffpmsg("failed to create JPEG-LS encoder");
         return MEMORY_ALLOCATION;
@@ -272,6 +292,13 @@ static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int byte
     frame.component_count = 1;
 
     charls_jpegls_errc err = charls_jpegls_encoder_set_frame_info(encoder, &frame);
+
+    /* NEAR parameter: 0 = lossless, > 0 = near-lossless with that maximum
+       absolute error per sample.  NEAR is recorded in the JPEG-LS codestream
+       itself, so the decoder recovers it without any external metadata. */
+    if (!err && max_err > 0)
+        err = charls_jpegls_encoder_set_near_lossless(encoder, max_err);
+
     if (!err)
         err = charls_jpegls_encoder_set_destination_buffer(encoder, dest, dest_capacity);
 
@@ -284,6 +311,11 @@ static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int byte
     charls_jpegls_encoder_destroy(encoder);
 
     if (err) {
+        if (err == CHARLS_JPEGLS_ERRC_DESTINATION_TOO_SMALL && dest_too_small) {
+            /* Recoverable: let the caller grow the buffer and re-encode. */
+            *dest_too_small = 1;
+            return DATA_COMPRESSION_ERR;
+        }
         ffpmsg("JPEG-LS encoding failed");
         return DATA_COMPRESSION_ERR;
     }
@@ -540,6 +572,24 @@ int fits_set_hcomp_scale(fitsfile *fptr,  /* I - FITS file pointer   */
     return(*status);
 }
 /*--------------------------------------------------------------------------*/
+int fits_set_jpegls_maxerr(fitsfile *fptr, /* I - FITS file pointer   */
+           int maxerr,          /* JPEG-LS max error (NEAR) parameter    */
+                                /* 0 = lossless (default), > 0 = near-   */
+                                /* lossless with that max absolute error */
+           int *status)         /* IO - error status                */
+{
+/*
+   This routine specifies the value of the JPEG-LS max error (NEAR) parameter.
+*/
+    if (maxerr < 0) {
+        ffpmsg("JPEG-LS max error must be >= 0 (fits_set_jpegls_maxerr)");
+        return(*status = DATA_COMPRESSION_ERR);
+    }
+
+    (fptr->Fptr)->request_jpegls_maxerr = maxerr;
+    return(*status);
+}
+/*--------------------------------------------------------------------------*/
 int fits_set_hcomp_smooth(fitsfile *fptr,  /* I - FITS file pointer   */
            int smooth,       /* hcompress smooth parameter value       */
                                 /* if scale > 1 and smooth != 0, then */
@@ -678,6 +728,7 @@ int fits_unset_compression_request(
     (fptr->Fptr)->request_quantize_method = 0;
     (fptr->Fptr)->request_dither_seed = 0; 
     (fptr->Fptr)->request_hcomp_scale = 0;
+    (fptr->Fptr)->request_jpegls_maxerr = 0;
     (fptr->Fptr)->request_lossy_int_compress = 0;
     (fptr->Fptr)->request_huge_hdu = 0;
 
@@ -913,6 +964,20 @@ int fits_get_dither_seed(fitsfile *fptr,  /* I - FITS file pointer   */
     *offset = (fptr->Fptr)->request_dither_seed;
     return(*status);
 }/*--------------------------------------------------------------------------*/
+int fits_get_jpegls_maxerr(fitsfile *fptr, /* I - FITS file pointer   */
+           int *maxerr,         /* JPEG-LS max error (NEAR) parameter    */
+           int *status)         /* IO - error status                */
+
+{
+/*
+   This routine returns the value of the JPEG-LS max error (NEAR) parameter
+   that will be used when compressing an image.  0 means lossless.
+*/
+
+    *maxerr = (fptr->Fptr)->request_jpegls_maxerr;
+    return(*status);
+}
+/*--------------------------------------------------------------------------*/
 int fits_get_hcomp_scale(fitsfile *fptr,  /* I - FITS file pointer   */
            float *scale,          /* Hcompress scale parameter value       */
            int *status)         /* IO - error status                */
@@ -1525,15 +1590,22 @@ int imcomp_init_table(fitsfile *outfptr,
     }
     else if ((outfptr->Fptr)->request_compress_type == JPEGLS_1)
     {
-        ffpkys (outfptr, "ZNAME1", "BYTEPIX",
+        /* MAXERR is ZNAME1 to match the Astropy JPEG-LS codec convention,
+           so compressed files stay readable by both toolchains. */
+        ffpkys (outfptr, "ZNAME1", "MAXERR",
+            "JPEG-LS max error (0 = lossless)", status);
+        ffpkyj (outfptr, "ZVAL1", (long) (outfptr->Fptr)->request_jpegls_maxerr,
+            "JPEG-LS max error (0 = lossless)", status);
+
+        ffpkys (outfptr, "ZNAME2", "BYTEPIX",
             "bytes per pixel (1, 2, or 4)", status);
 
         if (bitpix == BYTE_IMG)
-            ffpkyj (outfptr, "ZVAL1", 1, "bytes per pixel", status);
+            ffpkyj (outfptr, "ZVAL2", 1, "bytes per pixel", status);
         else if (bitpix == SHORT_IMG)
-            ffpkyj (outfptr, "ZVAL1", 2, "bytes per pixel", status);
+            ffpkyj (outfptr, "ZVAL2", 2, "bytes per pixel", status);
         else
-            ffpkyj (outfptr, "ZVAL1", 4, "bytes per pixel", status);
+            ffpkyj (outfptr, "ZVAL2", 4, "bytes per pixel", status);
     }
 
     /* Write the BSCALE and BZERO keywords, if an unsigned integer image */
@@ -1602,8 +1674,21 @@ int imcomp_calc_max_elem (int comptype, int nx, int zbitpix, int blocksize)
     }
      else if (comptype == JPEGLS_1)
     {
-        int bytes = (abs(zbitpix) == 16) ? 2 : 1;
-        return(nx * bytes + 1024);
+        /* Optimistic estimate: assume JPEG-LS at least breaks even, which
+           holds for essentially all real astronomical data.  JPEG-LS can
+           expand incompressible data past this, so imcomp_compress_tile()
+           detects the overflow and re-encodes into a worst-case buffer
+           (see imcomp_jpegls_max_encoded_size).  Sizing optimistically here
+           keeps the common-case working set small, which matters on
+           memory-constrained hardware. */
+        if (abs(zbitpix) == 8)
+            return(nx + 1024);
+        else if (abs(zbitpix) == 16)
+            return(nx * 2 + 1024);
+        else
+            /* 32-bit tiles are split into two 16-bit planes, each encoded as
+               its own JPEG-LS stream, preceded by a 2-byte length header. */
+            return(nx * 4 + 1024 + 2);
     }
      else if (comptype == HCOMPRESS_1)
     {
@@ -2227,104 +2312,144 @@ int imcomp_compress_tile (fitsfile *outfptr,
             size_t pixel_count = (size_t) tilelen;
             size_t bytes_written = 0;
             int bytes_per_sample = intlength;
+            int max_err = (outfptr->Fptr)->jpegls_maxerr;
+            int too_small = 0;
+            int attempt;
 
-            if (bytes_per_sample == 1) {
-                const unsigned char *src = (const unsigned char *) idata;
-                *status = imcomp_jpegls_encode(src, pixel_count, bytes_per_sample,
-                    (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny);
-            } else if (bytes_per_sample == 2) {
-                uint16_t *tmpbuf = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
-                if (!tmpbuf) {
-                    free(cbuf);
-                    ffpmsg("Memory allocation failure (JPEG-LS encode).");
-                    return(*status = MEMORY_ALLOCATION);
-                }
+            /* cbuf is sized optimistically (see imcomp_calc_max_elem), which
+               succeeds for essentially all real data.  JPEG-LS may expand
+               incompressible data past that, so if the encoder reports the
+               destination was too small, grow cbuf to the guaranteed worst
+               case and encode this tile again.  Only pathological tiles ever
+               need the second pass, so the common case keeps a small buffer. */
+            for (attempt = 0; attempt < 2; attempt++) {
 
-                /* Convert int16 to uint16 via arithmetic offset for FITS compatibility */
-                short *src = (short *) idata;
-                for (ii = 0; ii < (long) pixel_count; ii++) {
-                    tmpbuf[ii] = (uint16_t) ((int) src[ii] + 0x8000);  /* add 2^15 */
-                }
+                too_small = 0;
+                bytes_written = 0;
+                *status = 0;
 
-                *status = imcomp_jpegls_encode(tmpbuf, pixel_count, bytes_per_sample,
-                    (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny);
-                free(tmpbuf);
-            } else if (bytes_per_sample == 4) {
-                const int *src = (const int *) idata;
-                uint16_t *upper = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
-                uint16_t *lower = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
-                size_t upper_written = 0;
-                size_t lower_written = 0;
+                if (bytes_per_sample == 1) {
+                    const unsigned char *src = (const unsigned char *) idata;
+                    *status = imcomp_jpegls_encode(src, pixel_count, bytes_per_sample,
+                        (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny,
+                        max_err, &too_small);
+                } else if (bytes_per_sample == 2) {
+                    uint16_t *tmpbuf = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+                    if (!tmpbuf) {
+                        free(cbuf);
+                        ffpmsg("Memory allocation failure (JPEG-LS encode).");
+                        return(*status = MEMORY_ALLOCATION);
+                    }
 
-                if (!upper || !lower) {
-                    free(upper);
-                    free(lower);
-                    free(cbuf);
-                    ffpmsg("Memory allocation failure (JPEG-LS encode).");
-                    return(*status = MEMORY_ALLOCATION);
-                }
+                    /* Convert int16 to uint16 via arithmetic offset for FITS compatibility */
+                    short *src = (short *) idata;
+                    for (ii = 0; ii < (long) pixel_count; ii++) {
+                        tmpbuf[ii] = (uint16_t) ((int) src[ii] + 0x8000);  /* add 2^15 */
+                    }
 
-                for (ii = 0; ii < (long) pixel_count; ii++) {
-                    uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL);
-                    upper[ii] = (uint16_t)(uval >> 16);
-                    lower[ii] = (uint16_t)(uval & 0xFFFFU);
-                }
+                    *status = imcomp_jpegls_encode(tmpbuf, pixel_count, bytes_per_sample,
+                        (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny,
+                        max_err, &too_small);
+                    free(tmpbuf);
+                } else if (bytes_per_sample == 4) {
+                    const int *src = (const int *) idata;
+                    uint16_t *upper = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+                    uint16_t *lower = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
+                    size_t upper_written = 0;
+                    size_t lower_written = 0;
 
-                if (clen <= 2) {
-                    free(upper);
-                    free(lower);
-                    free(cbuf);
-                    ffpmsg("JPEG-LS buffer too small for 32-bit encoding");
-                    return(*status = DATA_COMPRESSION_ERR);
-                }
+                    if (!upper || !lower) {
+                        free(upper);
+                        free(lower);
+                        free(cbuf);
+                        ffpmsg("Memory allocation failure (JPEG-LS encode).");
+                        return(*status = MEMORY_ALLOCATION);
+                    }
 
-                unsigned char *payload = ((unsigned char *) cbuf) + 2;
-                size_t remaining = clen - 2;
+                    for (ii = 0; ii < (long) pixel_count; ii++) {
+                        uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL);
+                        upper[ii] = (uint16_t)(uval >> 16);
+                        lower[ii] = (uint16_t)(uval & 0xFFFFU);
+                    }
 
-                *status = imcomp_jpegls_encode(upper, pixel_count, 2,
-                    payload, remaining, &upper_written, tilenx, tileny);
-                if (!*status) {
-                    if (upper_written > remaining) {
-                        *status = DATA_COMPRESSION_ERR;
-                    } else {
+                    if (clen <= 2) {
+                        free(upper);
+                        free(lower);
+                        free(cbuf);
+                        ffpmsg("JPEG-LS buffer too small for 32-bit encoding");
+                        return(*status = DATA_COMPRESSION_ERR);
+                    }
+
+                    unsigned char *payload = ((unsigned char *) cbuf) + 2;
+                    size_t remaining = clen - 2;
+
+                    /* The upper plane MUST be encoded losslessly: an error of
+                       1 there becomes 65536 in the reconstructed 32-bit value.
+                       Applying NEAR to the low plane alone keeps the total
+                       absolute error within max_err, as promised. */
+                    *status = imcomp_jpegls_encode(upper, pixel_count, 2,
+                        payload, remaining, &upper_written, tilenx, tileny,
+                        0, &too_small);
+                    if (!*status) {
                         payload += upper_written;
                         remaining -= upper_written;
                         *status = imcomp_jpegls_encode(lower, pixel_count, 2,
-                            payload, remaining, &lower_written, tilenx, tileny);
+                            payload, remaining, &lower_written, tilenx, tileny,
+                            max_err, &too_small);
                     }
-                }
 
-                free(upper);
-                free(lower);
+                    free(upper);
+                    free(lower);
 
-                if (*status) {
+                    if (!*status) {
+                        if (upper_written > UINT16_MAX) {
+                            free(cbuf);
+                            ffpmsg("JPEG-LS encoded upper segment too large for 2-byte header");
+                            return(*status = DATA_COMPRESSION_ERR);
+                        }
+
+                        /* Use 2-byte header (big-endian) for Astropy compatibility */
+                        unsigned char *lenptr = (unsigned char *) cbuf;
+                        uint16_t upper_len16 = (uint16_t) upper_written;
+
+                        lenptr[0] = (unsigned char)((upper_len16 >> 8) & 0xFF);
+                        lenptr[1] = (unsigned char)(upper_len16 & 0xFF);
+
+                        bytes_written = 2 + upper_written + lower_written;
+                    }
+                } else {
                     free(cbuf);
-                    if (*status == DATA_COMPRESSION_ERR)
-                        ffpmsg("JPEG-LS encoding failed for 32-bit tiles");
-                    return(*status);
-                }
-
-                if (upper_written > UINT16_MAX) {
-                    free(cbuf);
-                    ffpmsg("JPEG-LS encoded upper segment too large for 2-byte header");
+                    ffpmsg("JPEG-LS only supports 8, 16, or split 32-bit integer tiles");
                     return(*status = DATA_COMPRESSION_ERR);
                 }
 
-                /* Use 2-byte header (big-endian) for Astropy compatibility */
-                unsigned char *lenptr = (unsigned char *) cbuf;
-                uint16_t upper_len16 = (uint16_t) upper_written;
+                /* Done, or failed for a reason a bigger buffer cannot fix. */
+                if (!*status || !too_small || attempt > 0)
+                    break;
 
-                lenptr[0] = (unsigned char)((upper_len16 >> 8) & 0xFF);
-                lenptr[1] = (unsigned char)(upper_len16 & 0xFF);
+                {   /* Grow to the size JPEG-LS can never exceed, then retry. */
+                    void *newbuf;
+                    size_t bigger = (bytes_per_sample == 4)
+                        ? 2 * imcomp_jpegls_max_encoded_size(pixel_count, 2) + 2
+                        : imcomp_jpegls_max_encoded_size(pixel_count, bytes_per_sample);
 
-                bytes_written = 2 + upper_written + lower_written;
-            } else {
-                free(cbuf);
-                ffpmsg("JPEG-LS only supports 8, 16, or split 32-bit integer tiles");
-                return(*status = DATA_COMPRESSION_ERR);
+                    if (bigger <= clen)
+                        break;   /* already at worst case: a real failure */
+
+                    newbuf = realloc(cbuf, bigger);
+                    if (!newbuf) {
+                        free(cbuf);
+                        ffpmsg("Memory allocation failure growing JPEG-LS tile buffer.");
+                        return(*status = MEMORY_ALLOCATION);
+                    }
+                    cbuf = (short *) newbuf;
+                    clen = bigger;
+                }
             }
 
             if (*status) {
+                if (too_small)
+                    ffpmsg("JPEG-LS encoding exceeded the maximum possible encoded size");
                 free(cbuf);
                 return(*status);
             }
@@ -5757,7 +5882,17 @@ int imcomp_get_compressed_image_par(fitsfile *infptr, int *status)
         tstatus = 0;
         ffgky(infptr, TINT,"ZVAL2", &(infptr->Fptr)->hcomp_smooth,
                   NULL, &tstatus);
-    }    
+    } else if ((infptr->Fptr)->compress_type == JPEGLS_1 ) {
+
+        /* NEAR is carried in the JPEG-LS codestream itself, so this is only
+           informational (e.g. for fpack -L).  Absent keyword means lossless. */
+        tstatus = 0;
+        if (ffgky(infptr, TINT,"ZVAL1", &(infptr->Fptr)->jpegls_maxerr,
+                  NULL, &tstatus) > 0)
+        {
+            (infptr->Fptr)->jpegls_maxerr = 0;
+        }
+    }
 
     /* store number of pixels in each compression tile, */
     /* and max size of the compressed tile buffer */

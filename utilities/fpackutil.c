@@ -161,6 +161,7 @@ int fp_init (fpstate *fpptr)
 	int	ii;
 
 	fpptr->comptype = RICE_1;
+	fpptr->jpegls_maxerr = 0;   /* JPEG-LS lossless by default */
 	fpptr->quantize_level = DEF_QLEVEL;
         fpptr->no_dither = 0;
         fpptr->dither_method = 1;
@@ -977,6 +978,7 @@ int fp_pack (char *infits, char *outfits, fpstate fpvar, int *islossless)
 	    fits_set_dither_offset(outfptr, fpvar.dither_offset, &stat);
 	    fits_set_hcomp_scale (outfptr, fpvar.scale, &stat);
 	    fits_set_hcomp_smooth (outfptr, fpvar.smooth, &stat);
+	    fits_set_jpegls_maxerr (outfptr, fpvar.jpegls_maxerr, &stat);
 
 	    fp_pack_hdu (infptr, outfptr, fpvar, islossless, &stat);
 

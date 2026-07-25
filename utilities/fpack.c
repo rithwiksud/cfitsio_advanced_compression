@@ -47,6 +47,7 @@ int fp_get_param (int argc, char *argv[], fpstate *fpptr)
 	for (iarg = 1; iarg < argc; iarg++) {
 	    if ((argv[iarg][0] == '-' && strlen (argv[iarg]) == 2) ||
 	        !strncmp(argv[iarg], "-q", 2) || !strncmp(argv[iarg], "-qz", 3) ||
+	        !strncmp(argv[iarg], "-j", 2) ||
 	        !strncmp(argv[iarg], "-g1", 3) || !strncmp(argv[iarg], "-g2", 3) ||
 	        !strncmp(argv[iarg], "-i2f", 4) ||
 	        !strncmp(argv[iarg], "-n3ratio", 8) || !strncmp(argv[iarg], "-n3min", 6) ||
@@ -93,6 +94,22 @@ int fp_get_param (int argc, char *argv[], fpstate *fpptr)
 */
 		} else if (argv[iarg][1] == 'j') {
 		    fpptr->comptype = JPEGLS_1;
+
+		    /* an optional integer following the 'j' is the JPEG-LS
+		       max error (NEAR): -j or -j0 = lossless, -j3 = max
+		       error 3, etc.  Upper limit is enforced by the codec
+		       (ISO/IEC 14495-1: min(255, MAXVAL/2)). */
+		    if (argv[iarg][2]) {
+			char *endp;
+			long merr = strtol (&argv[iarg][2], &endp, 10);
+
+			if (*endp || merr < 0 || merr > 255) {
+			    fp_msg ("Error: JPEG-LS max error must be an integer 0-255\n");
+			    fp_usage (); exit (-1);
+			}
+			fpptr->jpegls_maxerr = (int) merr;
+		    }
+
 		    if (gottype) {
 			fp_msg ("Error: multiple compression flags\n");
 			fp_usage (); exit (-1);
@@ -400,7 +417,8 @@ fp_msg (" -r          Rice compression [default], or\n");
 fp_msg (" -h          Hcompress compression, or\n");
 fp_msg (" -g  or -g1  GZIP_1 (per-tile) compression, or\n");
 fp_msg (" -g2         GZIP_2 (per-tile) compression (with byte shuffling), or\n");
-fp_msg (" -j          JPEG-LS compression (lossless 8- or 16-bit integer images), or\n");
+fp_msg (" -j  or -jN  JPEG-LS compression of integer images; N is the maximum\n");
+fp_msg ("             absolute error per pixel (0-255, default 0 = lossless), or\n");
 /*
 fp_msg (" -b          BZIP2 (per-tile) compression, or\n");
 */

@@ -95,6 +95,7 @@ VERSION	History
 typedef struct
 {
 	int	comptype;
+	int	jpegls_maxerr;
 	float	quantize_level;
 	int     no_dither;
 	int     dither_offset;
