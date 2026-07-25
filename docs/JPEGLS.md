@@ -77,7 +77,11 @@ stay readable by both toolchains.
 - **Compression ratio**: raw image bytes ÷ compressed *data-unit* bytes
   (binary table + heap), which excludes FITS headers.
 - **Timing**: median of 3–5 runs of the `fpack` / `funpack` binaries.
-- **Peak memory**: maximum resident set size via `/usr/bin/time -l`.
+- **Peak memory**: the two `peak RSS MB` columns are the *maximum resident
+  set size* of the `fpack` process (compression) and of the `funpack`
+  process (decompression) respectively, in megabytes, measured with
+  `/usr/bin/time -l`. They are peak values for the whole process, not
+  averages and not per-tile allocations.
 
 ### 2.1 Real telescope images
 
@@ -86,7 +90,7 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 
 **Hubble** — 2068×4144 uint16, 17.1 MB raw, σ=1265, range [2427, 65535]
 
-| config | ratio | comp s | decomp s | MB/s | fpack MB | funpack MB | max err |
+| config | ratio | comp s | decomp s | MB/s | peak RSS MB<br>(fpack) | peak RSS MB<br>(funpack) | max err |
 |---|---|---|---|---|---|---|---|
 | Rice | 2.058 | 0.108 | 0.157 | 159.2 | 8.3 | 10.0 | 0 |
 | Hcompress | 2.020 | 0.259 | 0.427 | 66.2 | 9.5 | 16.8 | 0 |
@@ -99,7 +103,7 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 
 **JWST** — 2048×2048 uint16, 8.4 MB raw, σ=1763, range [0, 65307]
 
-| config | ratio | comp s | decomp s | MB/s | fpack MB | funpack MB | max err |
+| config | ratio | comp s | decomp s | MB/s | peak RSS MB<br>(fpack) | peak RSS MB<br>(funpack) | max err |
 |---|---|---|---|---|---|---|---|
 | Rice | 1.257 | 0.056 | 0.077 | 150.5 | 5.9 | 9.4 | 0 |
 | Hcompress | **1.369** | 0.130 | 0.213 | 64.4 | 8.0 | 11.4 | 0 |
@@ -112,7 +116,7 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 
 **Keck** — 2048×2248 uint16, 9.2 MB raw, σ=5412, range [0, 65535]
 
-| config | ratio | comp s | decomp s | MB/s | fpack MB | funpack MB | max err |
+| config | ratio | comp s | decomp s | MB/s | peak RSS MB<br>(fpack) | peak RSS MB<br>(funpack) | max err |
 |---|---|---|---|---|---|---|---|
 | Rice | 1.759 | 0.057 | 0.088 | 162.7 | 5.9 | 9.8 | 0 |
 | Hcompress | 1.812 | 0.135 | 0.228 | 68.3 | 6.5 | 10.6 | 0 |
@@ -125,7 +129,7 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 
 **SDSS** — 800×800 uint16, 1.3 MB raw, σ=5.3, range [1003, 1060] (very low noise)
 
-| config | ratio | comp s | decomp s | MB/s | fpack MB | funpack MB | max err |
+| config | ratio | comp s | decomp s | MB/s | peak RSS MB<br>(fpack) | peak RSS MB<br>(funpack) | max err |
 |---|---|---|---|---|---|---|---|
 | Rice | 3.122 | 0.021 | 0.025 | 60.5 | 5.8 | 6.5 | 0 |
 | Hcompress | **3.286** | 0.028 | 0.036 | 45.9 | 7.8 | 7.4 | 0 |
@@ -144,8 +148,12 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 - **Speed**: Rice is the fastest by a wide margin (~150–160 MB/s, roughly 2×
   JPEG-LS). JPEG-LS sits in the middle; Hcompress is consistently slowest,
   especially decompressing (0.427 s vs 0.264 s on Hubble).
-- **Memory**: all three are within a few MB of each other (6–12 MB for an
-  8–17 MB image). Memory is dominated by the tile working set, not the codec.
+- **Peak memory**: the two RSS columns show peak process memory for `fpack`
+  and `funpack`. All three codecs sit within a few MB of each other (6–12 MB
+  peak for an 8–17 MB image), because peak RSS is dominated by the tile
+  working set and FITS buffers rather than by the codec. Note the peak stays
+  far below the full image size — that is tiling working as intended, since
+  only one tile is held at a time.
 - **Near-lossless**: the returns are large and grow with how noise-dominated
   the image is. SDSS (σ=5.3) reaches **183×** at `-j16` because ±16 erases
   essentially all of its noise. The measured max error matches `N` exactly in
@@ -156,15 +164,15 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 Astronomical-style synthetic frame (smooth sky + 300 point sources + Poisson
 noise), 2048×2048 int16, 8.4 MB, lossless, 512×512 tiles:
 
-| codec | ratio | comp s | decomp s | MB/s | fpack MB | funpack MB |
+| codec | ratio | comp s | decomp s | MB/s | peak RSS MB<br>(fpack) | peak RSS MB<br>(funpack) |
 |---|---|---|---|---|---|---|
 | **JPEG-LS** | **3.113** | 0.082 | 0.113 | 102.1 | 10.9 | 11.8 |
 | Rice | 2.898 | 0.049 | 0.089 | 170.5 | 5.7 | 9.1 |
 | Hcompress | 3.027 | 0.111 | 0.181 | 75.7 | 7.3 | 10.9 |
 | GZIP | 2.122 | 0.110 | 0.084 | 76.1 | 6.0 | 9.6 |
 
-Pure Gaussian noise (σ=32), 2048×2048 int16 — the worst case for prediction,
-since there is no structure to exploit:
+Pure Gaussian noise (σ=32), 2048×2048 int16 — the worst case for *prediction*,
+since neighbouring pixels are independent:
 
 | codec | ratio | comp s | decomp s | MB/s |
 |---|---|---|---|---|
@@ -172,6 +180,22 @@ since there is no structure to exploit:
 | Rice | 2.060 | 0.058 | 0.088 | 143.8 |
 | **Hcompress** | **2.157** | 0.121 | 0.170 | 69.3 |
 | GZIP | 1.673 | 0.132 | 0.086 | 63.4 |
+
+These ratios are ~2.15 rather than ~1.0 because the two things are different:
+the noise is *unpredictable*, but it is also *narrow*. σ=32 values occupy only
+354 of the 65536 representable levels, so the measured Shannon entropy is
+**7.05 bits/pixel** inside a 16-bit container — a 16/7.05 = 2.27× redundancy
+available before any codec runs. A ratio near 1.0 needs noise filling the full
+16-bit range, which is what the incompressible-tile regression test uses.
+
+What prediction contributes here is close to nothing. For spatially
+independent noise, subtracting a neighbour yields a residual of variance 2σ²,
+so the predictor *widens* the distribution by √2 (≈0.5 bits) and merely buys
+back the cost of coding the absolute pedestal. That is why Hcompress edges
+ahead on this case, and why all three codecs land within 0.4–0.7 bits/pixel of
+the entropy bound (JPEG-LS and Hcompress 7.42, Rice 7.77): on structureless
+noise every codec is reduced to being an entropy coder, and there is very
+little left to win. Structured images, not noise, are what separate them.
 
 Same image as int32 (16.8 MB), exercising the two-plane split path:
 
