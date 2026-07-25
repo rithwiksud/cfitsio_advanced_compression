@@ -99,3 +99,10 @@ iter_image
 iter_var
 testf77
 testprog.fit
+
+# Research / experimental code (not part of the test suite)
+experiments/
+
+# Python
+__pycache__/
+*.pyc

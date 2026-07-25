@@ -282,6 +282,22 @@ IF (BZIP2_FOUND)
     TARGET_LINK_LIBRARIES(${LIB_NAME} ${BZIP2_LIBRARIES})
     SET (PKG_CONFIG_LIBS "${PKG_CONFIG_LIBS} -lbz2")
 ENDIF(BZIP2_FOUND)
+# CharLS (JPEG-LS), vendored as a git submodule.  imcompress.c includes
+# <charls/charls.h> unconditionally, so this is a hard requirement.
+IF (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/charls/CMakeLists.txt")
+    MESSAGE(FATAL_ERROR
+        "The CharLS submodule is missing. Run: git submodule update --init")
+ENDIF()
+SET (CHARLS_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
+SET (CHARLS_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+SET (CHARLS_BUILD_CLI     OFF CACHE BOOL "" FORCE)
+SET (CHARLS_INSTALL       OFF CACHE BOOL "" FORCE)
+ADD_SUBDIRECTORY(charls)
+# BUILD_INTERFACE keeps charls out of cfitsio's exported interface: it is
+# statically absorbed here, so consumers of an installed cfitsio must not be
+# told to look for a charls target that was never installed.
+TARGET_LINK_LIBRARIES(${LIB_NAME} $<BUILD_INTERFACE:charls>)
+SET (PKG_CONFIG_LIBS "${PKG_CONFIG_LIBS} -lcharls")
 
 #==============================================================================
 
@@ -298,6 +314,14 @@ install(TARGETS cfitsio EXPORT cfitsioTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+# cfitsio links charls, so charls must belong to the same export set or both
+# export() and install(EXPORT) reject the dangling dependency.
+install(TARGETS charls EXPORT cfitsioTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 install(FILES ${H_FILES} "${CMAKE_CURRENT_BINARY_DIR}/cfitsio_export.h"

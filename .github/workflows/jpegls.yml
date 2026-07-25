@@ -1,0 +1,90 @@
+name: JPEG-LS Tests
+
+# Builds CharLS from the vendored submodule, builds fpack/funpack, and runs
+# the JPEG-LS test suite: round-trip correctness, near-lossless max-error
+# bounds, and the lossless compression-ratio comparison against Rice,
+# Hcompress and GZIP.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  jpegls:
+    name: JPEG-LS (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository (with CharLS submodule)
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Verify submodule is present
+        run: |
+          test -f charls/CMakeLists.txt \
+            || { echo "CharLS submodule missing"; exit 1; }
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libtool autoconf automake \
+                                  libcurl4-openssl-dev zlib1g-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Python test dependencies
+        run: python -m pip install --upgrade pip numpy astropy
+
+      - name: Build CharLS
+        run: |
+          cmake -S charls -B charls/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCHARLS_BUILD_TESTS=OFF
+          cmake --build charls/build -j
+
+      - name: Configure CFITSIO
+        run: ./configure
+
+      - name: Build fpack and funpack
+        run: make fpack funpack -j
+
+      - name: Smoke test - fpack reports JPEG-LS support
+        run: ./fpack -H | grep -- '-jN' || ./fpack -H | grep -- '-j'
+
+      - name: Round-trip and near-lossless max-error tests
+        run: python3 test_jpegls_nearlossless.py
+
+      - name: Lossless compression-ratio comparison
+        run: python3 test_jpegls_compression_ratio.py
+
+  cmake-build:
+    name: CMake build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_CURL=OFF
+
+      - name: Build
+        run: cmake --build build --target fpack funpack -j

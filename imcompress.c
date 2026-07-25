@@ -245,6 +245,38 @@ void bz_internal_error(int errcode)
     return;
 }
 /*--------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------
+  JPEG-LS (ISO/IEC 14495-1) tile compression, via the CharLS codec.
+
+  Design notes for the whole JPEG-LS path:
+
+  * Sample format.  JPEG-LS codes unsigned samples of 2-16 bits.  FITS integer
+    images are signed, so each tile is converted before encoding:
+        8-bit  : passed through unchanged.
+        16-bit : value + 32768, an arithmetic offset (NOT a bitwise cast).
+                 This matches FITS BZERO semantics and is undone on decode.
+        32-bit : exceeds JPEG-LS's 16-bit sample limit, so the tile is offset
+                 by 2^31 and split into two 16-bit planes (high and low),
+                 each encoded as an independent JPEG-LS stream.  The two
+                 streams are packed into one buffer behind a 4-byte
+                 big-endian length giving the size of the high-plane stream;
+                 the low plane occupies whatever remains.
+
+  * Near-lossless.  fpack's -jN sets the JPEG-LS NEAR parameter, bounding the
+    absolute error per sample by N.  NEAR is recorded inside the codestream,
+    so decoding needs no external metadata.  For split 32-bit tiles NEAR is
+    applied to the LOW plane only -- an error of 1 in the high plane would
+    become 65536 in the reconstructed value, breaking the error bound.
+
+  * Output buffer sizing.  JPEG-LS can *expand* incompressible data, so the
+    output can exceed the input.  Rather than always allocating the worst
+    case, imcomp_calc_max_elem() returns an optimistic estimate and the
+    encode dispatch below grows the buffer and re-encodes if CharLS reports
+    the destination was too small.  See imcomp_jpegls_max_encoded_size().
+
+  * Threading.  Tiles are compressed sequentially by imcomp_compress_image();
+    neither CFITSIO nor CharLS spawns threads here.
+---------------------------------------------------------------------------*/
 static size_t imcomp_jpegls_max_encoded_size(size_t pixel_count, int bytes_per_sample)
 {
     /* Worst-case encoded size for one JPEG-LS stream.  Mirrors CharLS's own
@@ -6951,6 +6983,9 @@ int imcomp_decompress_tile (fitsfile *infptr,
                     pixel_count, lower_tmp);
             }
             if (*status == 0) {
+                /* Reassemble each 32-bit sample from its two 16-bit planes and
+                   undo the 2^31 offset applied at encode time.  The subtraction
+                   is done in int64 so the intermediate cannot overflow. */
                 int *dest = idata;
                 for (ii = 0; ii < tilelen; ii++) {
                     uint32_t uval = ((uint32_t)upper_tmp[ii] << 16) |

@@ -77,14 +77,22 @@ def check(name, data, tmpdir, results):
             results.append((label, False, f"shape {decoded.shape} != {data.shape}"))
             continue
 
-        # Compare in a signed wide type so unsigned wraparound cannot mask error.
+        # CHECK: the per-pixel error bound.
+        # Compared in int64 because the data may be unsigned: subtracting in
+        # the native dtype would wrap around and silently hide a large error
+        # as a small one.
         diff = np.abs(decoded.astype(np.int64) - data.astype(np.int64))
         observed = int(diff.max())
 
         if max_err == 0:
+            # CHECK (lossless): -j0 must be bit-identical. Any difference at
+            # all is a correctness bug, not a tolerance question.
             passed = observed == 0
             detail = "bit-exact" if passed else f"lossless violated, max diff {observed}"
         else:
+            # CHECK (near-lossless): -jN promises max|orig - decoded| <= N.
+            # This is the contract the flag advertises, so it is asserted
+            # exactly, not approximately.
             passed = observed <= max_err
             detail = f"max diff {observed} <= {max_err}"
             if not passed:
@@ -106,7 +114,10 @@ def main():
     smooth = 1000 + 50 * np.sin(x / 20.0) + 50 * np.cos(y / 25.0)
 
     # --- data types -----------------------------------------------------
-    # FITS stores unsigned via BZERO; int8 has no native FITS BITPIX.
+    # CHECKS: every integer type JPEG-LS claims to support survives a
+    # round-trip. FITS stores unsigned types via BZERO, and has no native
+    # signed-byte BITPIX, so int8 is deliberately absent. int32/uint32
+    # exercise the two-plane split path, which is separate code from 8/16-bit.
     cases = [
         ("uint8", (smooth / 8).astype(np.uint8)),
         ("int16", (smooth + rng.poisson(30, smooth.shape)).astype(np.int16)),
@@ -116,6 +127,13 @@ def main():
     ]
 
     # --- buffer regressions: incompressible / high-entropy tiles ---------
+    # CHECKS two distinct bugs that both aborted the entire file:
+    #  * Random 16-bit tiles are incompressible, and JPEG-LS *expands* such
+    #    data by up to 6.25%. The output buffer used to be sized without that
+    #    allowance, so encoding failed outright. Pins the grow-and-retry fix.
+    #  * Wide-range int32 puts real entropy in BOTH 16-bit planes, so the
+    #    high plane no longer compresses under the old 2-byte (64 KB) length
+    #    header. Pins the 4-byte header.
     cases += [
         ("uint16 random (incompress.)", rng.integers(0, 65535, (512, 512)).astype(np.uint16)),
         ("int16 random (incompress.)", rng.integers(-32768, 32767, (512, 512)).astype(np.int16)),
