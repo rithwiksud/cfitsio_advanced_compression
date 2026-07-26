@@ -118,3 +118,6 @@ tests/test_*
 test_*.fits
 run-testprog.trs
 tg123x.kfj
+
+# automake build stamp
+.dirstamp
