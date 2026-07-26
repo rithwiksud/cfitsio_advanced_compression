@@ -25,7 +25,8 @@ git submodule update --init
 
 # 1. build the CharLS codec
 cmake -S charls -B charls/build -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_SHARED_LIBS=OFF -DCHARLS_BUILD_TESTS=OFF
+      -DBUILD_SHARED_LIBS=OFF -DCHARLS_BUILD_TESTS=OFF \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 cmake --build charls/build -j
 
 # 2. build CFITSIO (fpack/funpack)

@@ -1056,7 +1056,13 @@ LD = @LD@
 LDFLAGS = @LDFLAGS@ -L$(top_builddir)/charls/build
 LIBOBJS = @LIBOBJS@
 LIBPRE = @LIBPRE@
-LIBS = @LIBS@ -lcharls
+# CharLS is written in C++, but cfitsio links with the C driver, which does
+# not pull in the C++ runtime.  Without this, linking libcfitsio against
+# libcharls.a fails on undefined C++ symbols (_ZSt7nothrow, operator new, ...).
+# Apple platforms use libc++; GCC on Linux uses libstdc++.  It must come AFTER
+# -lcharls so the static archive's undefined symbols are resolved.
+CHARLS_CXXLIB = $(shell test "`uname -s`" = Darwin && echo -lc++ || echo -lstdc++)
+LIBS = @LIBS@ -lcharls $(CHARLS_CXXLIB)
 LIBS_CURL = @LIBS_CURL@
 LIBTOOL = @LIBTOOL@
 LIPO = @LIPO@
