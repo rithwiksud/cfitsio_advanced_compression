@@ -297,6 +297,24 @@ within ±E", not "how well does a codec re-compress its own padding".
 
 ![Compression ratio vs max error](maxerr_vs_ratio.png)
 
+The top axis of each panel restates the error budget **in units of that image's
+noise σ**, which is the only way the four panels are comparable. The same
+absolute error means wildly different things across them:
+
+| image | σ | max error swept | in units of σ |
+|---|---|---|---|
+| Hubble | 1265 | ±16 | **0.013 σ** |
+| JWST | 1763 | ±16 | 0.0091 σ |
+| Keck | 5412 | ±16 | 0.0030 σ |
+| SDSS | 5.3 | ±2 | **0.38 σ** |
+
+So `-j16` on Hubble perturbs pixels by roughly **one hundredth** of the frame's
+own noise — far below the level at which any measurement is affected — and
+still returns 6.9× compression. SDSS at ±2 is already 0.38 σ, nearly thirty
+times more aggressive in relative terms, which is why its sweep stops there.
+Read as absolute error the four panels look like the same experiment; read in σ
+they are not, and the σ axis is what makes that visible.
+
 | image | max err | JPEG-LS `-jN` | Rice `-q -2N` | Hcompress `-q -2N` | JPEG-LS advantage |
 |---|---|---|---|---|---|
 | **Hubble** | 0 (lossless) | **2.215** | 2.058 | 2.020 | +7.6% |
