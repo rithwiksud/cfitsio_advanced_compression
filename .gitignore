@@ -106,3 +106,15 @@ experiments/
 # Python
 __pycache__/
 *.pyc
+
+# `make check` artifacts: compiled test binaries, their outputs and TAP logs.
+# These were accidentally committed once by a blanket `git add -A`.
+tests/test_*
+!tests/test_*.c
+!tests/test_*.h
+!tests/tests.am
+*.trs
+*.log
+test_*.fits
+run-testprog.trs
+tg123x.kfj
