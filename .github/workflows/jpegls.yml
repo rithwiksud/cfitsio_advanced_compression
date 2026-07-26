@@ -62,8 +62,23 @@ jobs:
       - name: Build fpack and funpack
         run: make fpack funpack -j
 
-      - name: Smoke test - fpack reports JPEG-LS support
-        run: ./fpack -H | grep -- '-jN' || ./fpack -H | grep -- '-j'
+      # NOT a help-text grep: fpack's usage text lists -jN whether or not CharLS
+      # was compiled in, so grepping it would pass even on a build with JPEG-LS
+      # stubbed out.  Actually compress something and require it to work.
+      - name: Smoke test - JPEG-LS is really compiled in
+        run: |
+          python3 -c "
+          from astropy.io import fits; import numpy as np
+          fits.PrimaryHDU(np.arange(256*256, dtype=np.int16).reshape(256,256)
+                          ).writeto('smoke.fit', overwrite=True)"
+          ./fpack -j smoke.fit
+          test -f smoke.fit.fz || { echo 'fpack -j produced no output'; exit 1; }
+          ./funpack -O smoke_out.fit smoke.fit.fz
+          python3 -c "
+          from astropy.io import fits; import numpy as np, sys
+          a = fits.getdata('smoke.fit'); b = fits.getdata('smoke_out.fit')
+          sys.exit(0 if np.array_equal(a, b) else 'JPEG-LS round-trip mismatch')"
+          rm -f smoke.fit smoke.fit.fz smoke_out.fit
 
       - name: Round-trip and near-lossless max-error tests
         run: python3 test_jpegls_nearlossless.py
@@ -89,3 +104,53 @@ jobs:
 
       - name: Build
         run: cmake --build build --target fpack funpack -j
+
+  without-charls:
+    # JPEG-LS is an optional build-time feature.  This job proves CFITSIO still
+    # builds and works when the CharLS submodule is absent -- the case of a
+    # `make distcheck` tarball or a clone made without --recursive.  Without
+    # this, a regression in the HAVE_CHARLS guards would go unnoticed, since
+    # every other job has the submodule.
+    name: Build without CharLS submodule
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout WITHOUT submodules
+        uses: actions/checkout@v7        # note: no `submodules:` key
+
+      - name: Confirm the submodule really is absent
+        run: |
+          test ! -f charls/include/charls/charls.h \
+            || { echo "charls present; this job must run without it"; exit 1; }
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libtool autoconf automake \
+                                  libcurl4-openssl-dev zlib1g-dev
+
+      - name: Configure and build
+        run: |
+          ./configure
+          make fpack funpack -j
+
+      - name: Stock CFITSIO test suite still passes
+        run: make check
+
+      - name: Rice still works
+        run: |
+          python3 -m pip install --quiet numpy astropy
+          python3 -c "
+          from astropy.io import fits; import numpy as np
+          fits.PrimaryHDU(np.arange(128*128, dtype=np.int16).reshape(128,128)
+                          ).writeto('t.fit', overwrite=True)"
+          ./fpack -r t.fit && test -f t.fit.fz
+
+      - name: JPEG-LS fails cleanly rather than crashing or silently succeeding
+        run: |
+          rm -f t.fit.fz
+          if ./fpack -j t.fit; then
+            echo "fpack -j unexpectedly SUCCEEDED in a build without CharLS"
+            exit 1
+          fi
+          ./fpack -j t.fit 2>&1 | grep -qi "without" \
+            || { echo "missing the expected 'built without CharLS' message"; exit 1; }
