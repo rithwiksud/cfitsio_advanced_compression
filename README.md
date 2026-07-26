@@ -6,7 +6,7 @@
 > *near-lossless* compression with a guaranteed per-pixel error bound.
 >
 > On real telescope images JPEG-LS compresses **3–8% better than Rice**
-> losslessly, and near-lossless mode reaches **2–180×** depending on how
+> losslessly, and near-lossless mode reaches **2–7×** at ±16 depending on how
 > noise-dominated the image is. See [docs/JPEGLS.md](docs/JPEGLS.md) for the
 > full benchmarks, methodology and a reproduction of the Pence et al. (2009)
 > compression-efficiency analysis.

@@ -140,7 +140,11 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 | JPEG-LS -j8 | 3.456 | 0.151 | 0.148 | 61.0 | 10.2 | 15.7 | 8 |
 | JPEG-LS -j16 | 4.250 | 0.142 | 0.145 | 64.6 | 10.2 | 15.2 | 16 |
 
-**SDSS** — 800×800 uint16, 1.3 MB raw, σ=5.3, range [1003, 1060] (very low noise)
+**SDSS** — 800×800 uint16, 1.3 MB raw, σ=5.3, range [1003, 1060]
+
+Only 57 distinct levels, so the near-lossless sweep stops at ±2. A ±4 budget
+is already 0.75σ and 14% of the whole dynamic range; ±16 would be 3σ and 56%,
+which destroys the science content rather than trading a little of it.
 
 | config | ratio | comp s | decomp s | MB/s | peak RSS MB<br>(fpack) | peak RSS MB<br>(funpack) | max err |
 |---|---|---|---|---|---|---|---|
@@ -151,9 +155,6 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
 | JPEG-LS (512×512) | 3.285 | 0.026 | 0.029 | 48.5 | 6.5 | 6.9 | 0 |
 | JPEG-LS -j1 | 4.851 | 0.032 | 0.031 | 39.9 | 7.7 | 7.7 | 1 |
 | JPEG-LS -j2 | 6.073 | 0.032 | 0.032 | 39.5 | 6.5 | 6.9 | 2 |
-| JPEG-LS -j4 | 8.747 | 0.032 | 0.032 | 40.0 | 6.4 | 7.0 | 4 |
-| JPEG-LS -j8 | 16.398 | 0.026 | 0.026 | 50.2 | 6.6 | 7.0 | 8 |
-| JPEG-LS -j16 | **182.779** | 0.019 | 0.022 | 68.7 | 6.5 | 6.9 | 16 |
 
 **Reading these tables**
 
@@ -182,9 +183,11 @@ plus the measured maximum per-pixel error to confirm the `-jN` bound holds.
   RSS at the cost of a few percent of ratio for Hcompress, and almost nothing
   for Rice. On memory-constrained hardware that may be the better operating
   point; see also the tile-size sweep in §2.3.
-- **Near-lossless**: returns grow with how noise-dominated the image is. SDSS
-  (σ=5.3) reaches **183×** at `-j16` because ±16 erases essentially all of its
-  noise. Measured max error matches `N` exactly in every case.
+- **Near-lossless**: returns grow with how noise-dominated the image is, and
+  the usable range depends on the image's dynamic range. Hubble reaches 6.9× at
+  `-j16`; SDSS spans only 57 levels, so it is swept only to ±2 (6.1×) — beyond
+  that the error is a large fraction of the signal itself. Measured max error
+  matches `N` exactly in every case.
 
 ### 2.2 Synthetic images
 
@@ -314,14 +317,15 @@ within ±E", not "how well does a codec re-compress its own padding".
 | | 4 | **2.896** | 2.580 | 2.709 | +6.9% |
 | | 8 | **3.456** | 3.040 | 3.209 | +7.7% |
 | | 16 | **4.250** | 3.627 | 3.847 | +10.5% |
-| **SDSS** | 0 (lossless) | 3.285 | 3.122 | **3.286** | −0.0% |
+| **SDSS**¹ | 0 (lossless) | 3.285 | 3.122 | **3.286** | −0.0% |
 | | 1 | **4.851** | 3.809 | 4.035 | +20.2% |
 | | 2 | **6.073** | 4.734 | 5.196 | +16.9% |
-| | 4 | **8.747** | 6.550 | 6.957 | +25.7% |
-| | 8 | **16.398** | 8.539 | 9.394 | +74.5% |
-| | 16 | **182.779** | 10.401 | 12.643 | **+1346%** |
 
 ("JPEG-LS advantage" is against the better of Rice and Hcompress at that row.)
+
+¹ SDSS spans only 57 levels (σ=5.3), so it is swept only to ±2. At ±4 the
+error is already 0.75σ; ±16 would be 3σ and 56% of the full range — past the
+point where "near-lossless" is a meaningful description.
 
 **What this shows**
 
@@ -332,10 +336,10 @@ within ±E", not "how well does a codec re-compress its own padding".
   precision inside the predictive loop, so the predictor keeps working on the
   already-quantized values. The quantization route instead coarsens the data
   *before* a codec that then has less structure left to exploit.
-- **SDSS is the extreme case**: at `-j16`, JPEG-LS reaches 183× against 12.6×
-  for quantized Hcompress. With σ=5.3, a ±16 budget lets JPEG-LS's predictor
-  collapse whole regions to a constant, while quantization merely maps 57
-  distinct levels onto 4.
+- **SDSS shows the widest relative gap** even in its restricted ±2 range:
+  6.073× against 5.196× for quantized Hcompress (+16.9%). With only 57 distinct
+  levels, JPEG-LS's predictor can collapse whole regions to a constant, while
+  quantization merely coarsens the level set.
 - **JWST is the narrow case.** JPEG-LS's lead shrinks to +0.1% at `-j16`, and
   quantized Hcompress is genuinely competitive throughout — consistent with
   JWST being the one image where Hcompress also wins losslessly.
@@ -384,9 +388,32 @@ Measured K (1024×1024 images, 512×512 tiles, lossless):
 | GZIP | 2.07 | 4.61 | much worse, noise-dependent |
 
 **Agreement with the paper.** Rice and Hcompress reproduce the published
-ordering and land close to the published values (1.01 vs ~1.2, 0.67 vs ~0.8);
-both measurements come out slightly *better* than the paper's, which is
-expected since these are newer CFITSIO implementations. GZIP reproduces the
+ordering and land close to the published values (1.01 vs ~1.2, 0.67 vs ~0.8).
+Both come out slightly *better* than the paper's, and **tile size accounts for
+much of that difference.** Our K was measured at 512×512, whereas stock CFITSIO
+defaults to row-wise tiles. Re-measuring K across tilings:
+
+| tiling | JPEG-LS | Rice | Hcompress |
+|---|---|---|---|
+| row-wise (CFITSIO default) | 0.722 | **1.087** | **0.752** |
+| 512×512 | 0.722 | 1.007 | 0.666 |
+| 256×256 | 0.774 | 1.008 | 0.671 |
+| 64×64 | 1.420 | 1.027 | 0.767 |
+| *paper (Pence+2009)* | *—* | *~1.2* | *~0.8* |
+
+Larger tiles amortise per-tile header and predictor-restart overhead, so K
+falls. At row-wise tiling Hcompress gives K = 0.752, essentially the paper's
+~0.8, and Rice moves from 1.007 to 1.087 against the paper's ~1.2. So tiling
+explains most of the Hcompress gap and roughly half of Rice's; the remainder is
+plausibly fifteen years of CFITSIO refinement, different source images, and the
+paper quoting round figures. This is a partial explanation, not a controlled
+reproduction — the paper does not state its tiling, so the comparison above is
+indicative rather than conclusive.
+
+(JPEG-LS's row entry is identical to its 512×512 entry because this fork
+*defaults* JPEG-LS to 512×512 — it has no row-wise mode. Its sharp degradation
+at 64×64, K 0.722 → 1.420, shows how much it depends on having enough rows
+above each pixel to predict from.) GZIP reproduces the
 paper's qualitative finding exactly: much larger K, and strongly dependent on
 the noise distribution (K spans 1.85–2.38 between the two synthetic sets,
 versus ±0.08 for Rice), because it treats each byte of a 16-bit pixel as an
