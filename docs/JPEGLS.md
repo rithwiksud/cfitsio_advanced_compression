@@ -265,6 +265,86 @@ Synthetic astronomical image, 2048×2048 int16:
 | 16 | 53.546 | 17.20× | 16 |
 | 32 | 158.551 | 50.93× | 32 |
 
+### 2.5 Near-lossless comparison: JPEG-LS vs quantized Rice / Hcompress
+
+Rice and Hcompress have no native error-bound mode, but CFITSIO can give them
+one indirectly. Its float pipeline quantizes floating-point images to scaled
+integers before compressing, and `quantize.c` uses `delta = -qlevel` when the
+level is negative — so `-q -D` sets an **absolute quantization step** of `D`.
+Writing an integer image as `float32` and compressing it with `-q -D` therefore
+yields a bounded error.
+
+Rounding to nearest bounds the error at `D/2`, so a target max error `E` needs
+`D = 2E`. Sweeping `D` from `1.0E` to `3.0E` confirms this exactly: the largest
+step that still satisfies the bound is `D = 2E` in 18 of 20 cases, giving a
+measured max error of precisely `E`.
+
+```bash
+# max error 4, via quantization - note D = 2 x 4 = 8
+python -c "from astropy.io import fits; import numpy as np; \
+  d=fits.getdata('img.fits'); fits.PrimaryHDU(d.astype('float32')).writeto('f.fits')"
+./fpack -r -q -8 f.fits          # Rice,      max err 4
+./fpack -h -s 0 -q -8 f.fits     # Hcompress, max err 4
+./fpack -j4 img.fits             # JPEG-LS,   max err 4  (native, no float detour)
+```
+
+Ratios below are all against the **original uint16** byte count, not the
+inflated float32 one — the fair question is "how many bytes to store this image
+within ±E", not "how well does a codec re-compress its own padding".
+
+![Compression ratio vs max error](maxerr_vs_ratio.png)
+
+| image | max err | JPEG-LS `-jN` | Rice `-q -2N` | Hcompress `-q -2N` | JPEG-LS advantage |
+|---|---|---|---|---|---|
+| **Hubble** | 0 (lossless) | **2.215** | 2.058 | 2.020 | +7.6% |
+| | 1 | **2.848** | 2.348 | 2.307 | +21.3% |
+| | 2 | **3.261** | 2.747 | 2.683 | +18.7% |
+| | 4 | **3.914** | 3.290 | 3.192 | +19.0% |
+| | 8 | **4.968** | 4.007 | 3.885 | +24.0% |
+| | 16 | **6.906** | 5.177 | 4.885 | +33.4% |
+| **JWST** | 0 (lossless) | 1.362 | 1.257 | **1.369** | −0.5% |
+| | 1 | **1.581** | 1.361 | 1.497 | +5.6% |
+| | 2 | **1.703** | 1.487 | 1.651 | +3.2% |
+| | 4 | **1.868** | 1.640 | 1.840 | +1.5% |
+| | 8 | **2.090** | 1.827 | 2.078 | +0.6% |
+| | 16 | **2.389** | 2.062 | 2.386 | +0.1% |
+| **Keck** | 0 (lossless) | **1.846** | 1.759 | 1.812 | +1.9% |
+| | 1 | **2.266** | 1.965 | 2.040 | +11.1% |
+| | 2 | **2.521** | 2.236 | 2.331 | +8.2% |
+| | 4 | **2.896** | 2.580 | 2.709 | +6.9% |
+| | 8 | **3.456** | 3.040 | 3.209 | +7.7% |
+| | 16 | **4.250** | 3.627 | 3.847 | +10.5% |
+| **SDSS** | 0 (lossless) | 3.285 | 3.122 | **3.286** | −0.0% |
+| | 1 | **4.851** | 3.809 | 4.035 | +20.2% |
+| | 2 | **6.073** | 4.734 | 5.196 | +16.9% |
+| | 4 | **8.747** | 6.550 | 6.957 | +25.7% |
+| | 8 | **16.398** | 8.539 | 9.394 | +74.5% |
+| | 16 | **182.779** | 10.401 | 12.643 | **+1346%** |
+
+("JPEG-LS advantage" is against the better of Rice and Hcompress at that row.)
+
+**What this shows**
+
+- **JPEG-LS wins at every non-zero error bound, on all four images** — and by a
+  far wider margin than it wins losslessly. Where the lossless gap is 0–8%, the
+  near-lossless gap is typically 5–33%.
+- **The advantage grows with the error budget.** Native `NEAR` discards
+  precision inside the predictive loop, so the predictor keeps working on the
+  already-quantized values. The quantization route instead coarsens the data
+  *before* a codec that then has less structure left to exploit.
+- **SDSS is the extreme case**: at `-j16`, JPEG-LS reaches 183× against 12.6×
+  for quantized Hcompress. With σ=5.3, a ±16 budget lets JPEG-LS's predictor
+  collapse whole regions to a constant, while quantization merely maps 57
+  distinct levels onto 4.
+- **JWST is the narrow case.** JPEG-LS's lead shrinks to +0.1% at `-j16`, and
+  quantized Hcompress is genuinely competitive throughout — consistent with
+  JWST being the one image where Hcompress also wins losslessly.
+- **The quantization route is a real option**, not a strawman: it beats
+  lossless JPEG-LS comfortably and needs no new codec. Its costs are the
+  float32 detour (2× memory during compression, and the file must be written as
+  float) and that the error bound is a *consequence* of the step size rather
+  than a stated parameter.
+
 ---
 
 ## 3. Compression efficiency *K* — reproducing Pence et al. (2009)
