@@ -7,7 +7,16 @@
 # include <time.h>
 # include <limits.h>
 # include "fitsio2.h"
+
+/* JPEG-LS support is provided by CharLS, vendored as a git submodule in
+   charls/.  It is OPTIONAL: the build defines HAVE_CHARLS only when that
+   submodule is actually present (see Makefile.in), so CFITSIO still builds
+   in contexts where the submodule is unavailable -- a `make distcheck`
+   tarball, or a checkout made without --recursive.  Without it, requesting
+   JPEGLS_1 fails cleanly at run time instead of failing to compile. */
+#ifdef HAVE_CHARLS
 # include <charls/charls.h>
+#endif
 
 #define NULL_VALUE -2147483647 /* value used to represent undefined pixels */
 #define ZERO_VALUE -2147483646 /* value used to represent zero-valued pixels */
@@ -291,6 +300,16 @@ static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int byte
     unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny,
     int max_err, int *dest_too_small)
 {
+#ifndef HAVE_CHARLS
+    (void) source; (void) pixel_count; (void) bytes_per_sample; (void) dest;
+    (void) dest_capacity; (void) bytes_written; (void) tilenx; (void) tileny;
+    (void) max_err;
+    if (dest_too_small)
+        *dest_too_small = 0;
+    ffpmsg("JPEG-LS compression is not available: CFITSIO was built without");
+    ffpmsg("CharLS.  Run 'git submodule update --init', build charls/, rebuild.");
+    return DATA_COMPRESSION_ERR;
+#else
     charls_jpegls_encoder *encoder;
 
     /* Distinguishes "buffer was too small" (caller may retry with a larger
@@ -353,11 +372,19 @@ static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int byte
     }
 
     return 0;
+#endif
 }
 /*--------------------------------------------------------------------------*/
 static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size, int bytes_per_sample,
     size_t pixel_count, void *dest)
 {
+#ifndef HAVE_CHARLS
+    (void) source; (void) source_size; (void) bytes_per_sample;
+    (void) pixel_count; (void) dest;
+    ffpmsg("Cannot decompress a JPEG-LS tile: CFITSIO was built without CharLS.");
+    ffpmsg("Run 'git submodule update --init', build charls/, then rebuild.");
+    return DATA_DECOMPRESSION_ERR;
+#else
     charls_jpegls_decoder *decoder = charls_jpegls_decoder_create();
     if (!decoder) {
         ffpmsg("failed to create JPEG-LS decoder");
@@ -392,6 +419,7 @@ static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size,
     }
 
     return 0;
+#endif
 }
 /*--------------------------------------------------------------------------*/
 int fits_set_compression_type(fitsfile *fptr,  /* I - FITS file pointer     */

@@ -181,7 +181,7 @@ am__uninstall_files_from_dir = { \
 LTLIBRARIES = $(lib_LTLIBRARIES) $(noinst_LTLIBRARIES)
 am__DEPENDENCIES_1 =
 libcfitsio_la_DEPENDENCIES = $(am__DEPENDENCIES_1) \
-	$(am__DEPENDENCIES_1) libcfitsio_swapproc.la
+	libcfitsio_swapproc.la
 am__libcfitsio_la_SOURCES_DIST = buffers.c cfileio.c checksum.c \
 	drvrfile.c drvrmem.c drvrnet.c drvrsmem.c editcol.c edithdu.c \
 	eval_l.c eval_y.c eval_f.c fitscore.c getcol.c getcolb.c \
@@ -251,11 +251,11 @@ am__dirstamp = $(am__leading_dot)dirstamp
 am_cookbook_OBJECTS = utilities/cookbook.$(OBJEXT)
 cookbook_OBJECTS = $(am_cookbook_OBJECTS)
 cookbook_LDADD = $(LDADD)
-cookbook_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+cookbook_DEPENDENCIES = libcfitsio.la
 am_fitscopy_OBJECTS = utilities/fitscopy.$(OBJEXT)
 fitscopy_OBJECTS = $(am_fitscopy_OBJECTS)
 fitscopy_LDADD = $(LDADD)
-fitscopy_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+fitscopy_DEPENDENCIES = libcfitsio.la
 am_fitsverify_OBJECTS = utilities/fitsverify-ftverify.$(OBJEXT) \
 	utilities/fitsverify-fvrf_data.$(OBJEXT) \
 	utilities/fitsverify-fvrf_file.$(OBJEXT) \
@@ -264,269 +264,264 @@ am_fitsverify_OBJECTS = utilities/fitsverify-ftverify.$(OBJEXT) \
 	utilities/fitsverify-fvrf_misc.$(OBJEXT)
 fitsverify_OBJECTS = $(am_fitsverify_OBJECTS)
 fitsverify_LDADD = $(LDADD)
-fitsverify_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+fitsverify_DEPENDENCIES = libcfitsio.la
 fitsverify_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(fitsverify_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
 am_fpack_OBJECTS = utilities/fpack.$(OBJEXT) \
 	utilities/fpackutil.$(OBJEXT)
 fpack_OBJECTS = $(am_fpack_OBJECTS)
-am__DEPENDENCIES_2 = libcfitsio.la $(am__DEPENDENCIES_1)
-fpack_DEPENDENCIES = $(am__DEPENDENCIES_2)
+fpack_DEPENDENCIES = $(LDADD)
 am_funpack_OBJECTS = utilities/funpack.$(OBJEXT) \
 	utilities/fpackutil.$(OBJEXT)
 funpack_OBJECTS = $(am_funpack_OBJECTS)
-funpack_DEPENDENCIES = $(am__DEPENDENCIES_2)
+funpack_DEPENDENCIES = $(LDADD)
 am_imcopy_OBJECTS = utilities/imcopy.$(OBJEXT)
 imcopy_OBJECTS = $(am_imcopy_OBJECTS)
 imcopy_LDADD = $(LDADD)
-imcopy_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+imcopy_DEPENDENCIES = libcfitsio.la
 am__iter_image_SOURCES_DIST = utilities/iter_image.c
 @BUILD_ITER_TRUE@am_iter_image_OBJECTS =  \
 @BUILD_ITER_TRUE@	utilities/iter_image.$(OBJEXT)
 iter_image_OBJECTS = $(am_iter_image_OBJECTS)
 iter_image_LDADD = $(LDADD)
-iter_image_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+iter_image_DEPENDENCIES = libcfitsio.la
 am__iter_var_SOURCES_DIST = utilities/iter_var.c
 @BUILD_ITER_TRUE@am_iter_var_OBJECTS = utilities/iter_var.$(OBJEXT)
 iter_var_OBJECTS = $(am_iter_var_OBJECTS)
 iter_var_LDADD = $(LDADD)
-iter_var_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+iter_var_DEPENDENCIES = libcfitsio.la
 am_smem_OBJECTS = utilities/smem.$(OBJEXT)
 smem_OBJECTS = $(am_smem_OBJECTS)
 smem_LDADD = $(LDADD)
-smem_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+smem_DEPENDENCIES = libcfitsio.la
 am_speed_OBJECTS = utilities/speed.$(OBJEXT)
 speed_OBJECTS = $(am_speed_OBJECTS)
 speed_LDADD = $(LDADD)
-speed_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+speed_DEPENDENCIES = libcfitsio.la
 am__testf77_SOURCES_DIST = utilities/testf77.f
 @NOFORTRAN_FALSE@am_testf77_OBJECTS = utilities/testf77.$(OBJEXT)
 testf77_OBJECTS = $(am_testf77_OBJECTS)
 testf77_LDADD = $(LDADD)
-testf77_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+testf77_DEPENDENCIES = libcfitsio.la
 am_testprog_OBJECTS = utilities/testprog.$(OBJEXT)
 testprog_OBJECTS = $(am_testprog_OBJECTS)
 testprog_LDADD = $(LDADD)
-testprog_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+testprog_DEPENDENCIES = libcfitsio.la
 am_tests_test_buffers_OBJECTS = tests/test_buffers.$(OBJEXT)
 tests_test_buffers_OBJECTS = $(am_tests_test_buffers_OBJECTS)
 tests_test_buffers_LDADD = $(LDADD)
-tests_test_buffers_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_buffers_DEPENDENCIES = libcfitsio.la
 am_tests_test_cfileio_OBJECTS = tests/test_cfileio.$(OBJEXT)
 tests_test_cfileio_OBJECTS = $(am_tests_test_cfileio_OBJECTS)
 tests_test_cfileio_LDADD = $(LDADD)
-tests_test_cfileio_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_cfileio_DEPENDENCIES = libcfitsio.la
 am_tests_test_checksum_OBJECTS = tests/test_checksum.$(OBJEXT)
 tests_test_checksum_OBJECTS = $(am_tests_test_checksum_OBJECTS)
 tests_test_checksum_LDADD = $(LDADD)
-tests_test_checksum_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_checksum_DEPENDENCIES = libcfitsio.la
 am_tests_test_drvrsmem_OBJECTS = tests/test_drvrsmem.$(OBJEXT)
 tests_test_drvrsmem_OBJECTS = $(am_tests_test_drvrsmem_OBJECTS)
 tests_test_drvrsmem_LDADD = $(LDADD)
-tests_test_drvrsmem_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_drvrsmem_DEPENDENCIES = libcfitsio.la
 am_tests_test_editcol_OBJECTS = tests/test_editcol.$(OBJEXT)
 tests_test_editcol_OBJECTS = $(am_tests_test_editcol_OBJECTS)
 tests_test_editcol_LDADD = $(LDADD)
-tests_test_editcol_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_editcol_DEPENDENCIES = libcfitsio.la
 am_tests_test_edithdu_OBJECTS = tests/test_edithdu.$(OBJEXT)
 tests_test_edithdu_OBJECTS = $(am_tests_test_edithdu_OBJECTS)
 tests_test_edithdu_LDADD = $(LDADD)
-tests_test_edithdu_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_edithdu_DEPENDENCIES = libcfitsio.la
 am_tests_test_eval_OBJECTS = tests/test_eval.$(OBJEXT)
 tests_test_eval_OBJECTS = $(am_tests_test_eval_OBJECTS)
 tests_test_eval_LDADD = $(LDADD)
-tests_test_eval_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_eval_DEPENDENCIES = libcfitsio.la
 am_tests_test_fileops_OBJECTS = tests/test_fileops.$(OBJEXT)
 tests_test_fileops_OBJECTS = $(am_tests_test_fileops_OBJECTS)
 tests_test_fileops_LDADD = $(LDADD)
-tests_test_fileops_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_fileops_DEPENDENCIES = libcfitsio.la
 am_tests_test_find_match_delim_OBJECTS =  \
 	tests/test_find_match_delim.$(OBJEXT)
 tests_test_find_match_delim_OBJECTS =  \
 	$(am_tests_test_find_match_delim_OBJECTS)
 tests_test_find_match_delim_LDADD = $(LDADD)
-tests_test_find_match_delim_DEPENDENCIES = libcfitsio.la \
-	$(am__DEPENDENCIES_1)
+tests_test_find_match_delim_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcol_OBJECTS = tests/test_getcol.$(OBJEXT)
 tests_test_getcol_OBJECTS = $(am_tests_test_getcol_OBJECTS)
 tests_test_getcol_LDADD = $(LDADD)
-tests_test_getcol_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcol_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcolb_OBJECTS = tests/test_getcolb.$(OBJEXT)
 tests_test_getcolb_OBJECTS = $(am_tests_test_getcolb_OBJECTS)
 tests_test_getcolb_LDADD = $(LDADD)
-tests_test_getcolb_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcolb_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcold_OBJECTS = tests/test_getcold.$(OBJEXT)
 tests_test_getcold_OBJECTS = $(am_tests_test_getcold_OBJECTS)
 tests_test_getcold_LDADD = $(LDADD)
-tests_test_getcold_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcold_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcole_OBJECTS = tests/test_getcole.$(OBJEXT)
 tests_test_getcole_OBJECTS = $(am_tests_test_getcole_OBJECTS)
 tests_test_getcole_LDADD = $(LDADD)
-tests_test_getcole_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcole_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcoli_OBJECTS = tests/test_getcoli.$(OBJEXT)
 tests_test_getcoli_OBJECTS = $(am_tests_test_getcoli_OBJECTS)
 tests_test_getcoli_LDADD = $(LDADD)
-tests_test_getcoli_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcoli_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcolj_OBJECTS = tests/test_getcolj.$(OBJEXT)
 tests_test_getcolj_OBJECTS = $(am_tests_test_getcolj_OBJECTS)
 tests_test_getcolj_LDADD = $(LDADD)
-tests_test_getcolj_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcolj_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcolk_OBJECTS = tests/test_getcolk.$(OBJEXT)
 tests_test_getcolk_OBJECTS = $(am_tests_test_getcolk_OBJECTS)
 tests_test_getcolk_LDADD = $(LDADD)
-tests_test_getcolk_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcolk_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcoll_OBJECTS = tests/test_getcoll.$(OBJEXT)
 tests_test_getcoll_OBJECTS = $(am_tests_test_getcoll_OBJECTS)
 tests_test_getcoll_LDADD = $(LDADD)
-tests_test_getcoll_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcoll_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcols_OBJECTS = tests/test_getcols.$(OBJEXT)
 tests_test_getcols_OBJECTS = $(am_tests_test_getcols_OBJECTS)
 tests_test_getcols_LDADD = $(LDADD)
-tests_test_getcols_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcols_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcolsb_OBJECTS = tests/test_getcolsb.$(OBJEXT)
 tests_test_getcolsb_OBJECTS = $(am_tests_test_getcolsb_OBJECTS)
 tests_test_getcolsb_LDADD = $(LDADD)
-tests_test_getcolsb_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcolsb_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcolui_OBJECTS = tests/test_getcolui.$(OBJEXT)
 tests_test_getcolui_OBJECTS = $(am_tests_test_getcolui_OBJECTS)
 tests_test_getcolui_LDADD = $(LDADD)
-tests_test_getcolui_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcolui_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcoluj_OBJECTS = tests/test_getcoluj.$(OBJEXT)
 tests_test_getcoluj_OBJECTS = $(am_tests_test_getcoluj_OBJECTS)
 tests_test_getcoluj_LDADD = $(LDADD)
-tests_test_getcoluj_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcoluj_DEPENDENCIES = libcfitsio.la
 am_tests_test_getcoluk_OBJECTS = tests/test_getcoluk.$(OBJEXT)
 tests_test_getcoluk_OBJECTS = $(am_tests_test_getcoluk_OBJECTS)
 tests_test_getcoluk_LDADD = $(LDADD)
-tests_test_getcoluk_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getcoluk_DEPENDENCIES = libcfitsio.la
 am_tests_test_getkey_OBJECTS = tests/test_getkey.$(OBJEXT)
 tests_test_getkey_OBJECTS = $(am_tests_test_getkey_OBJECTS)
 tests_test_getkey_LDADD = $(LDADD)
-tests_test_getkey_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_getkey_DEPENDENCIES = libcfitsio.la
 am_tests_test_group_OBJECTS = tests/test_group.$(OBJEXT)
 tests_test_group_OBJECTS = $(am_tests_test_group_OBJECTS)
 tests_test_group_LDADD = $(LDADD)
-tests_test_group_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_group_DEPENDENCIES = libcfitsio.la
 am_tests_test_grparser_OBJECTS = tests/test_grparser.$(OBJEXT)
 tests_test_grparser_OBJECTS = $(am_tests_test_grparser_OBJECTS)
 tests_test_grparser_LDADD = $(LDADD)
-tests_test_grparser_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_grparser_DEPENDENCIES = libcfitsio.la
 am_tests_test_hcompress_OBJECTS = tests/test_hcompress.$(OBJEXT)
 tests_test_hcompress_OBJECTS = $(am_tests_test_hcompress_OBJECTS)
 tests_test_hcompress_LDADD = $(LDADD)
-tests_test_hcompress_DEPENDENCIES = libcfitsio.la \
-	$(am__DEPENDENCIES_1)
+tests_test_hcompress_DEPENDENCIES = libcfitsio.la
 am_tests_test_histo_OBJECTS = tests/test_histo.$(OBJEXT)
 tests_test_histo_OBJECTS = $(am_tests_test_histo_OBJECTS)
 tests_test_histo_LDADD = $(LDADD)
-tests_test_histo_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_histo_DEPENDENCIES = libcfitsio.la
 am_tests_test_imcompress_OBJECTS = tests/test_imcompress.$(OBJEXT)
 tests_test_imcompress_OBJECTS = $(am_tests_test_imcompress_OBJECTS)
 tests_test_imcompress_LDADD = $(LDADD)
-tests_test_imcompress_DEPENDENCIES = libcfitsio.la \
-	$(am__DEPENDENCIES_1)
+tests_test_imcompress_DEPENDENCIES = libcfitsio.la
 am_tests_test_iraffits_OBJECTS = tests/test_iraffits.$(OBJEXT)
 tests_test_iraffits_OBJECTS = $(am_tests_test_iraffits_OBJECTS)
 tests_test_iraffits_LDADD = $(LDADD)
-tests_test_iraffits_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_iraffits_DEPENDENCIES = libcfitsio.la
 am_tests_test_modkey_OBJECTS = tests/test_modkey.$(OBJEXT)
 tests_test_modkey_OBJECTS = $(am_tests_test_modkey_OBJECTS)
 tests_test_modkey_LDADD = $(LDADD)
-tests_test_modkey_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_modkey_DEPENDENCIES = libcfitsio.la
 am_tests_test_pliocomp_OBJECTS = tests/test_pliocomp.$(OBJEXT)
 tests_test_pliocomp_OBJECTS = $(am_tests_test_pliocomp_OBJECTS)
 tests_test_pliocomp_LDADD = $(LDADD)
-tests_test_pliocomp_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_pliocomp_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcol_OBJECTS = tests/test_putcol.$(OBJEXT)
 tests_test_putcol_OBJECTS = $(am_tests_test_putcol_OBJECTS)
 tests_test_putcol_LDADD = $(LDADD)
-tests_test_putcol_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcol_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcolb_OBJECTS = tests/test_putcolb.$(OBJEXT)
 tests_test_putcolb_OBJECTS = $(am_tests_test_putcolb_OBJECTS)
 tests_test_putcolb_LDADD = $(LDADD)
-tests_test_putcolb_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcolb_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcold_OBJECTS = tests/test_putcold.$(OBJEXT)
 tests_test_putcold_OBJECTS = $(am_tests_test_putcold_OBJECTS)
 tests_test_putcold_LDADD = $(LDADD)
-tests_test_putcold_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcold_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcole_OBJECTS = tests/test_putcole.$(OBJEXT)
 tests_test_putcole_OBJECTS = $(am_tests_test_putcole_OBJECTS)
 tests_test_putcole_LDADD = $(LDADD)
-tests_test_putcole_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcole_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcoli_OBJECTS = tests/test_putcoli.$(OBJEXT)
 tests_test_putcoli_OBJECTS = $(am_tests_test_putcoli_OBJECTS)
 tests_test_putcoli_LDADD = $(LDADD)
-tests_test_putcoli_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcoli_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcolj_OBJECTS = tests/test_putcolj.$(OBJEXT)
 tests_test_putcolj_OBJECTS = $(am_tests_test_putcolj_OBJECTS)
 tests_test_putcolj_LDADD = $(LDADD)
-tests_test_putcolj_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcolj_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcolk_OBJECTS = tests/test_putcolk.$(OBJEXT)
 tests_test_putcolk_OBJECTS = $(am_tests_test_putcolk_OBJECTS)
 tests_test_putcolk_LDADD = $(LDADD)
-tests_test_putcolk_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcolk_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcoll_OBJECTS = tests/test_putcoll.$(OBJEXT)
 tests_test_putcoll_OBJECTS = $(am_tests_test_putcoll_OBJECTS)
 tests_test_putcoll_LDADD = $(LDADD)
-tests_test_putcoll_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcoll_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcols_OBJECTS = tests/test_putcols.$(OBJEXT)
 tests_test_putcols_OBJECTS = $(am_tests_test_putcols_OBJECTS)
 tests_test_putcols_LDADD = $(LDADD)
-tests_test_putcols_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcols_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcolsb_OBJECTS = tests/test_putcolsb.$(OBJEXT)
 tests_test_putcolsb_OBJECTS = $(am_tests_test_putcolsb_OBJECTS)
 tests_test_putcolsb_LDADD = $(LDADD)
-tests_test_putcolsb_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcolsb_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcolu_OBJECTS = tests/test_putcolu.$(OBJEXT)
 tests_test_putcolu_OBJECTS = $(am_tests_test_putcolu_OBJECTS)
 tests_test_putcolu_LDADD = $(LDADD)
-tests_test_putcolu_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcolu_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcolui_OBJECTS = tests/test_putcolui.$(OBJEXT)
 tests_test_putcolui_OBJECTS = $(am_tests_test_putcolui_OBJECTS)
 tests_test_putcolui_LDADD = $(LDADD)
-tests_test_putcolui_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcolui_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcoluj_OBJECTS = tests/test_putcoluj.$(OBJEXT)
 tests_test_putcoluj_OBJECTS = $(am_tests_test_putcoluj_OBJECTS)
 tests_test_putcoluj_LDADD = $(LDADD)
-tests_test_putcoluj_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcoluj_DEPENDENCIES = libcfitsio.la
 am_tests_test_putcoluk_OBJECTS = tests/test_putcoluk.$(OBJEXT)
 tests_test_putcoluk_OBJECTS = $(am_tests_test_putcoluk_OBJECTS)
 tests_test_putcoluk_LDADD = $(LDADD)
-tests_test_putcoluk_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putcoluk_DEPENDENCIES = libcfitsio.la
 am_tests_test_putkey_OBJECTS = tests/test_putkey.$(OBJEXT)
 tests_test_putkey_OBJECTS = $(am_tests_test_putkey_OBJECTS)
 tests_test_putkey_LDADD = $(LDADD)
-tests_test_putkey_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_putkey_DEPENDENCIES = libcfitsio.la
 am_tests_test_quantize_OBJECTS = tests/test_quantize.$(OBJEXT)
 tests_test_quantize_OBJECTS = $(am_tests_test_quantize_OBJECTS)
 tests_test_quantize_LDADD = $(LDADD)
-tests_test_quantize_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_quantize_DEPENDENCIES = libcfitsio.la
 am_tests_test_region_OBJECTS = tests/test_region.$(OBJEXT)
 tests_test_region_OBJECTS = $(am_tests_test_region_OBJECTS)
 tests_test_region_LDADD = $(LDADD)
-tests_test_region_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_region_DEPENDENCIES = libcfitsio.la
 am_tests_test_ricecomp_OBJECTS = tests/test_ricecomp.$(OBJEXT)
 tests_test_ricecomp_OBJECTS = $(am_tests_test_ricecomp_OBJECTS)
 tests_test_ricecomp_LDADD = $(LDADD)
-tests_test_ricecomp_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_ricecomp_DEPENDENCIES = libcfitsio.la
 am_tests_test_scalnull_OBJECTS = tests/test_scalnull.$(OBJEXT)
 tests_test_scalnull_OBJECTS = $(am_tests_test_scalnull_OBJECTS)
 tests_test_scalnull_LDADD = $(LDADD)
-tests_test_scalnull_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_scalnull_DEPENDENCIES = libcfitsio.la
 am_tests_test_simplerng_OBJECTS = tests/test_simplerng.$(OBJEXT)
 tests_test_simplerng_OBJECTS = $(am_tests_test_simplerng_OBJECTS)
 tests_test_simplerng_LDADD = $(LDADD)
-tests_test_simplerng_DEPENDENCIES = libcfitsio.la \
-	$(am__DEPENDENCIES_1)
+tests_test_simplerng_DEPENDENCIES = libcfitsio.la
 am_tests_test_wcssub_OBJECTS = tests/test_wcssub.$(OBJEXT)
 tests_test_wcssub_OBJECTS = $(am_tests_test_wcssub_OBJECTS)
 tests_test_wcssub_LDADD = $(LDADD)
-tests_test_wcssub_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_wcssub_DEPENDENCIES = libcfitsio.la
 am_tests_test_wcsutil_OBJECTS = tests/test_wcsutil.$(OBJEXT)
 tests_test_wcsutil_OBJECTS = $(am_tests_test_wcsutil_OBJECTS)
 tests_test_wcsutil_LDADD = $(LDADD)
-tests_test_wcsutil_DEPENDENCIES = libcfitsio.la $(am__DEPENDENCIES_1)
+tests_test_wcsutil_DEPENDENCIES = libcfitsio.la
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -1023,7 +1018,7 @@ BUILD_REENTRANT = @BUILD_REENTRANT@
 CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
-CPPFLAGS = @CPPFLAGS@ -I$(top_builddir)/charls/include
+CPPFLAGS = @CPPFLAGS@
 CSCOPE = @CSCOPE@
 CTAGS = @CTAGS@
 CURLCONFIG = @CURLCONFIG@
@@ -1053,16 +1048,15 @@ INSTALL_ROOT = @INSTALL_ROOT@
 INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
 LD = @LD@
-LDFLAGS = @LDFLAGS@ -L$(top_builddir)/charls/build
+LDFLAGS = @LDFLAGS@
 LIBOBJS = @LIBOBJS@
 LIBPRE = @LIBPRE@
-# CharLS is written in C++, but cfitsio links with the C driver, which does
-# not pull in the C++ runtime.  Without this, linking libcfitsio against
-# libcharls.a fails on undefined C++ symbols (_ZSt7nothrow, operator new, ...).
-# Apple platforms use libc++; GCC on Linux uses libstdc++.  It must come AFTER
-# -lcharls so the static archive's undefined symbols are resolved.
-CHARLS_CXXLIB = $(shell test "`uname -s`" = Darwin && echo -lc++ || echo -lstdc++)
-LIBS = @LIBS@ -lcharls $(CHARLS_CXXLIB)
+
+# CHARLS_LIBS goes in LIBS, not LIBADD/LDADD: automake turns literal
+# LIBADD/LDADD entries into _DEPENDENCIES, so -lcharls would become a make
+# target ('No rule to make target -lcharls').  LIBS is appended at the end
+# of the link line, which is also the correct order for a static archive.
+LIBS = @LIBS@ $(CHARLS_LIBS)
 LIBS_CURL = @LIBS_CURL@
 LIBTOOL = @LIBTOOL@
 LIPO = @LIPO@
@@ -1156,6 +1150,27 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 version_info = @version_info@
+
+# ---------------------------------------------------------------------------
+# JPEG-LS support via CharLS, vendored as a git submodule in charls/.
+#
+# It is OPTIONAL and detected at build time: a `make distcheck` tarball and a
+# clone made without --recursive both lack the submodule, and CFITSIO must
+# still build in those cases.  When it is absent, HAVE_CHARLS is undefined and
+# imcompress.c compiles the JPEG-LS entry points as clean run-time errors.
+#
+# CharLS is C++, so the C++ runtime must be linked explicitly (the C driver
+# does not), and it must come AFTER -lcharls so the static archive resolves.
+# Defined here rather than only in Makefile.in so the flags survive autoreconf.
+# ---------------------------------------------------------------------------
+CHARLS_DIR = $(top_srcdir)/charls
+CHARLS_PRESENT = $(shell test -f $(CHARLS_DIR)/include/charls/charls.h && echo yes)
+CHARLS_CXXLIB = $(shell test "`uname -s`" = Darwin && echo -lc++ || echo -lstdc++)
+CHARLS_CPPFLAGS = $(if $(CHARLS_PRESENT),-I$(CHARLS_DIR)/include -DHAVE_CHARLS)
+CHARLS_LDFLAGS = $(if $(CHARLS_PRESENT),-L$(CHARLS_DIR)/build)
+CHARLS_LIBS = $(if $(CHARLS_PRESENT),-lcharls $(CHARLS_CXXLIB))
+AM_CPPFLAGS = $(CHARLS_CPPFLAGS)
+AM_LDFLAGS = $(CHARLS_LDFLAGS)
 lib_LTLIBRARIES = libcfitsio.la
 
 # Dummary library to compile single object file with SSE flags
@@ -1186,7 +1201,10 @@ libcfitsio_la_SOURCES = buffers.c cfileio.c checksum.c drvrfile.c \
 	fits_hdecompress.c simplerng.c zcompress.c zuncompress.c \
 	$(am__append_1) $(am__append_2)
 libcfitsio_la_CFLAGS = $(AM_CFLAGS) @DEFS@
-libcfitsio_la_LIBADD = -lm ${LIBS_CURL} ${LIBS} libcfitsio_swapproc.la
+# ${LIBS} is intentionally NOT listed here: automake appends $(LIBS) to the
+# link line automatically, and naming it in LIBADD would make automake treat
+# its contents (-lcharls) as a build dependency.
+libcfitsio_la_LIBADD = -lm ${LIBS_CURL} libcfitsio_swapproc.la
 libcfitsio_la_LDFLAGS = -version-info @version_info@
 libcfitsio_swapproc_la_CFLAGS = $(libcfitsio_la_CFLAGS) @SSE_FLAGS@
 libcfitsio_swapproc_la_SOURCES = swapproc.c
@@ -1212,7 +1230,9 @@ imcopy_SOURCES = utilities/imcopy.c
 smem_SOURCES = utilities/smem.c
 speed_SOURCES = utilities/speed.c
 testprog_SOURCES = utilities/testprog.c
-LDADD = libcfitsio.la ${LIBS}
+
+# ${LIBS} omitted deliberately - see libcfitsio_la_LIBADD above.
+LDADD = libcfitsio.la
 @NOFORTRAN_FALSE@testf77_SOURCES = utilities/testf77.f
 @BUILD_ITER_TRUE@iter_image_SOURCES = utilities/iter_image.c
 @BUILD_ITER_TRUE@iter_var_SOURCES = utilities/iter_var.c
@@ -1222,7 +1242,6 @@ FLEX = flex
 BISON = bison
 
 # Distribution: ==========================================================
-DISTCHECK_CONFIGURE_FLAGS = --enable-reentrant
 EXTRA_DIST = $(F77_WRAPPERS) ${GSIFTP_SRC} \
 	docs licenses \
 	README.md README.MacOS README.win \

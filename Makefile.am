@@ -4,6 +4,28 @@
 ##
 ## Author: B.Irby (NASA/GSFC), based on the previous CFITSIO Makefile.in
 
+# ---------------------------------------------------------------------------
+# JPEG-LS support via CharLS, vendored as a git submodule in charls/.
+#
+# It is OPTIONAL and detected at build time: a `make distcheck` tarball and a
+# clone made without --recursive both lack the submodule, and CFITSIO must
+# still build in those cases.  When it is absent, HAVE_CHARLS is undefined and
+# imcompress.c compiles the JPEG-LS entry points as clean run-time errors.
+#
+# CharLS is C++, so the C++ runtime must be linked explicitly (the C driver
+# does not), and it must come AFTER -lcharls so the static archive resolves.
+# Defined here rather than only in Makefile.in so the flags survive autoreconf.
+# ---------------------------------------------------------------------------
+CHARLS_DIR = $(top_srcdir)/charls
+CHARLS_PRESENT = $(shell test -f $(CHARLS_DIR)/include/charls/charls.h && echo yes)
+CHARLS_CXXLIB = $(shell test "`uname -s`" = Darwin && echo -lc++ || echo -lstdc++)
+CHARLS_CPPFLAGS = $(if $(CHARLS_PRESENT),-I$(CHARLS_DIR)/include -DHAVE_CHARLS)
+CHARLS_LDFLAGS = $(if $(CHARLS_PRESENT),-L$(CHARLS_DIR)/build)
+CHARLS_LIBS = $(if $(CHARLS_PRESENT),-lcharls $(CHARLS_CXXLIB))
+
+AM_CPPFLAGS = $(CHARLS_CPPFLAGS)
+AM_LDFLAGS = $(CHARLS_LDFLAGS)
+
 lib_LTLIBRARIES = libcfitsio.la
 
 # Dummary library to compile single object file with SSE flags
@@ -24,7 +46,11 @@ F77_WRAPPERS = f77_wrap1.c f77_wrap2.c f77_wrap3.c f77_wrap4.c
 
 GSIFTP_SRC = drvrgsiftp.c
 
-LIBS = @LIBS@
+# CHARLS_LIBS goes in LIBS, not LIBADD/LDADD: automake turns literal
+# LIBADD/LDADD entries into _DEPENDENCIES, so -lcharls would become a make
+# target ('No rule to make target -lcharls').  LIBS is appended at the end
+# of the link line, which is also the correct order for a static archive.
+LIBS = @LIBS@ $(CHARLS_LIBS)
 LIBS_CURL = @LIBS_CURL@
 
 libcfitsio_la_SOURCES =	\
@@ -98,8 +124,12 @@ libcfitsio_la_SOURCES += ${GSIFTP_SRC}
 endif
 
 libcfitsio_la_CFLAGS = $(AM_CFLAGS) @DEFS@
-libcfitsio_la_LIBADD = -lm ${LIBS_CURL} ${LIBS} libcfitsio_swapproc.la
+# ${LIBS} is intentionally NOT listed here: automake appends $(LIBS) to the
+# link line automatically, and naming it in LIBADD would make automake treat
+# its contents (-lcharls) as a build dependency.
+libcfitsio_la_LIBADD = -lm ${LIBS_CURL} libcfitsio_swapproc.la
 libcfitsio_la_LDFLAGS = -version-info @version_info@
+
 
 libcfitsio_swapproc_la_CFLAGS = $(libcfitsio_la_CFLAGS) @SSE_FLAGS@
 libcfitsio_swapproc_la_SOURCES = swapproc.c
@@ -160,9 +190,11 @@ speed_SOURCES = utilities/speed.c
 
 testprog_SOURCES = utilities/testprog.c
 
-LDADD = libcfitsio.la ${LIBS}
+# ${LIBS} omitted deliberately - see libcfitsio_la_LIBADD above.
+LDADD = libcfitsio.la
 
 noinst_PROGRAMS = testprog
+
 
 if !NOFORTRAN
 
