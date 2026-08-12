@@ -2443,13 +2443,28 @@ int imcomp_compress_tile (fitsfile *outfptr,
                         return(*status = MEMORY_ALLOCATION);
                     }
 
-                    for (ii = 0; ii < (long) pixel_count; ii++) {
+                    /* Rebase the tile to its own exact minimum before splitting.
+                       Splitting on the raw absolute value means two nearly-
+                       identical neighboring pixels that straddle a fixed 65536
+                       boundary wrap around in the lower plane, wrecking JPEG-LS's
+                       local prediction. Subtracting the tile's own minimum makes
+                       the split track the tile's actual local range instead of a
+                       fixed global boundary; the baseline is stored alongside
+                       upper_len so decode can undo it. */
+                    uint32_t tile_min = (uint32_t)((int64_t) src[0] + 0x80000000ULL);
+                    for (ii = 1; ii < (long) pixel_count; ii++) {
                         uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL);
+                        if (uval < tile_min) tile_min = uval;
+                    }
+                    uint32_t baseline = tile_min;
+
+                    for (ii = 0; ii < (long) pixel_count; ii++) {
+                        uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL) - baseline;
                         upper[ii] = (uint16_t)(uval >> 16);
                         lower[ii] = (uint16_t)(uval & 0xFFFFU);
                     }
 
-                    if (clen <= 4) {
+                    if (clen <= 8) {
                         free(upper);
                         free(lower);
                         free(cbuf);
@@ -2457,8 +2472,8 @@ int imcomp_compress_tile (fitsfile *outfptr,
                         return(*status = DATA_COMPRESSION_ERR);
                     }
 
-                    unsigned char *payload = ((unsigned char *) cbuf) + 4;
-                    size_t remaining = clen - 4;
+                    unsigned char *payload = ((unsigned char *) cbuf) + 8;
+                    size_t remaining = clen - 8;
 
                     /* The upper plane MUST be encoded losslessly: an error of
                        1 there becomes 65536 in the reconstructed 32-bit value.
@@ -2490,7 +2505,8 @@ int imcomp_compress_tile (fitsfile *outfptr,
                             return(*status = DATA_COMPRESSION_ERR);
                         }
 
-                        /* 4-byte big-endian length of the upper-plane stream */
+                        /* 4-byte big-endian length of the upper-plane stream,
+                           then the 4-byte big-endian tile baseline. */
                         unsigned char *lenptr = (unsigned char *) cbuf;
                         uint32_t upper_len32 = (uint32_t) upper_written;
 
@@ -2499,7 +2515,12 @@ int imcomp_compress_tile (fitsfile *outfptr,
                         lenptr[2] = (unsigned char)((upper_len32 >> 8) & 0xFF);
                         lenptr[3] = (unsigned char)(upper_len32 & 0xFF);
 
-                        bytes_written = 4 + upper_written + lower_written;
+                        lenptr[4] = (unsigned char)((baseline >> 24) & 0xFF);
+                        lenptr[5] = (unsigned char)((baseline >> 16) & 0xFF);
+                        lenptr[6] = (unsigned char)((baseline >> 8) & 0xFF);
+                        lenptr[7] = (unsigned char)(baseline & 0xFF);
+
+                        bytes_written = 8 + upper_written + lower_written;
                     }
                 } else {
                     free(cbuf);
@@ -2514,7 +2535,7 @@ int imcomp_compress_tile (fitsfile *outfptr,
                 {   /* Grow to the size JPEG-LS can never exceed, then retry. */
                     void *newbuf;
                     size_t bigger = (bytes_per_sample == 4)
-                        ? 2 * imcomp_jpegls_max_encoded_size(pixel_count, 2) + 4
+                        ? 2 * imcomp_jpegls_max_encoded_size(pixel_count, 2) + 8
                         : imcomp_jpegls_max_encoded_size(pixel_count, bytes_per_sample);
 
                     if (bigger <= clen)
@@ -6983,12 +7004,14 @@ int imcomp_decompress_tile (fitsfile *infptr,
             const unsigned char *src = cbuf;
             size_t total_bytes = (size_t) nelemll;
             uint32_t upper_len32;
+            uint32_t baseline;
             size_t lower_len;
             uint16_t *upper_tmp = NULL;
             uint16_t *lower_tmp = NULL;
 
-            /* 4-byte big-endian length header, then the two 16-bit planes */
-            if (total_bytes < 4) {
+            /* 4-byte big-endian length header, then a 4-byte big-endian tile
+               baseline, then the two 16-bit planes */
+            if (total_bytes < 8) {
                 free(idata);
                 free(cbuf);
                 ffpmsg("Invalid JPEG-LS stream for 32-bit tile");
@@ -6997,17 +7020,19 @@ int imcomp_decompress_tile (fitsfile *infptr,
 
             upper_len32 = ((uint32_t)src[0] << 24) | ((uint32_t)src[1] << 16) |
                           ((uint32_t)src[2] << 8)  |  (uint32_t)src[3];
+            baseline = ((uint32_t)src[4] << 24) | ((uint32_t)src[5] << 16) |
+                       ((uint32_t)src[6] << 8)  |  (uint32_t)src[7];
 
             /* Lower length is inferred from remaining bytes */
-            if ((size_t)upper_len32 > total_bytes - 4) {
+            if ((size_t)upper_len32 > total_bytes - 8) {
                 free(idata);
                 free(cbuf);
                 ffpmsg("Corrupted JPEG-LS 32-bit tile: upper length exceeds data");
                 return (*status = DATA_DECOMPRESSION_ERR);
             }
-            lower_len = total_bytes - 4 - (size_t)upper_len32;
+            lower_len = total_bytes - 8 - (size_t)upper_len32;
 
-            const unsigned char *upper_src = src + 4;
+            const unsigned char *upper_src = src + 8;
             const unsigned char *lower_src = upper_src + upper_len32;
 
             upper_tmp = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
@@ -7033,8 +7058,8 @@ int imcomp_decompress_tile (fitsfile *infptr,
                    is done in int64 so the intermediate cannot overflow. */
                 int *dest = idata;
                 for (ii = 0; ii < tilelen; ii++) {
-                    uint32_t uval = ((uint32_t)upper_tmp[ii] << 16) |
-                                    (uint32_t)lower_tmp[ii];
+                    uint32_t uval = (((uint32_t)upper_tmp[ii] << 16) |
+                                    (uint32_t)lower_tmp[ii]) + baseline;
                     dest[ii] = (int)((int64_t) uval - 0x80000000ULL);
                 }
             }
