@@ -1209,7 +1209,24 @@ int imcomp_init_table(fitsfile *outfptr,
          return(*status = DATA_COMPRESSION_ERR);
        }
     }
- 
+
+    /* warn that near-lossless JPEG-LS (NEAR > 0) on a floating point image */
+    /* compounds with the float->int quantization step: the NEAR error is  */
+    /* incurred in already-quantized integer units, then gets rescaled by  */
+    /* BSCALE on decode, so the resulting error in physical (float) units  */
+    /* is BSCALE-dependent and not simply equal to the requested N.  This  */
+    /* does not set *status: compression proceeds, this is advisory only. */
+    if ( (inbitpix < 0) &&
+         ((outfptr->Fptr)->request_compress_type == JPEGLS_1) &&
+         ((outfptr->Fptr)->request_jpegls_maxerr > 0) ) {
+       fprintf(stderr, "Warning: JPEG-LS near-lossless (NEAR=%d) on a "
+               "floating point image adds error on top of the float->int "
+               "quantization step, in units of the (per-tile) BSCALE; the "
+               "resulting error in physical units is therefore less "
+               "predictable than for integer images.\n",
+               (outfptr->Fptr)->request_jpegls_maxerr);
+    }
+
      /* set default compression parameter values, if undefined */
     
     if ( (outfptr->Fptr)->request_compress_type == 0) {
