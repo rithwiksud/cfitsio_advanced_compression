@@ -1621,11 +1621,12 @@ printf("    HDU %d does not meet noise criteria to be quantized, so losslessly c
                 /* finally, do the actual image compression */
 		fits_img_compress (infptr, outfptr, &stat);
 
-		if (bitpix < 0 || 
-		    (fpvar.comptype == HCOMPRESS_1 && fpvar.scale != 0.)) {
+		if (bitpix < 0 ||
+		    (fpvar.comptype == HCOMPRESS_1 && fpvar.scale != 0.) ||
+		    (fpvar.comptype == JPEGLS_1 && fpvar.jpegls_maxerr != 0)) {
 
 		    /* compressed image is not identical to original */
-		    *islossless = 0;  
+		    *islossless = 0;
 		}
 	}
 

@@ -83,6 +83,9 @@ jobs:
       - name: Round-trip and near-lossless max-error tests
         run: python3 test_jpegls_nearlossless.py
 
+      - name: Null-pixel, saturation and container-guard tests
+        run: python3 test_jpegls_guards.py
+
       - name: Lossless compression-ratio comparison
         run: python3 test_jpegls_compression_ratio.py
 

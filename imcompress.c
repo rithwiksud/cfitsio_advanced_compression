@@ -64,7 +64,7 @@ static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int byte
     unsigned char *dest, size_t dest_capacity, size_t *bytes_written, long tilenx, long tileny,
     int max_err, int *dest_too_small);
 static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size, int bytes_per_sample,
-    size_t pixel_count, void *dest);
+    size_t pixel_count, void *dest, int *near_out);
 static size_t imcomp_jpegls_max_encoded_size(size_t pixel_count, int bytes_per_sample);
 
 static int unquantize_i1r4(long row,
@@ -265,17 +265,39 @@ void bz_internal_error(int errcode)
         16-bit : value + 32768, an arithmetic offset (NOT a bitwise cast).
                  This matches FITS BZERO semantics and is undone on decode.
         32-bit : exceeds JPEG-LS's 16-bit sample limit, so the tile is offset
-                 by 2^31 and split into two 16-bit planes (high and low),
-                 each encoded as an independent JPEG-LS stream.  The two
-                 streams are packed into one buffer behind a 4-byte
-                 big-endian length giving the size of the high-plane stream;
-                 the low plane occupies whatever remains.
+                 by 2^31, rebased to a per-tile baseline (the minimum over
+                 the tile's non-null pixels), and split into two 16-bit
+                 planes (high and low), each encoded as an independent
+                 JPEG-LS stream.  The buffer layout is an 8-byte header --
+                 a 4-byte big-endian length of the high-plane stream, then
+                 the 4-byte big-endian baseline -- followed by the two
+                 streams; the low plane occupies whatever remains.  A
+                 high-plane length of 0 means the high plane is identically
+                 zero (common when the tile's range fits in 16 bits) and no
+                 stream was stored for it.  Null-marker pixels are excluded
+                 from the baseline so a single null (a huge negative
+                 reserved value) cannot forfeit the rebase; they wrap
+                 modulo 2^32 in the split, which reconstructs exactly.
 
   * Near-lossless.  fpack's -jN sets the JPEG-LS NEAR parameter, bounding the
     absolute error per sample by N.  NEAR is recorded inside the codestream,
     so decoding needs no external metadata.  For split 32-bit tiles NEAR is
     applied to the LOW plane only -- an error of 1 in the high plane would
     become 65536 in the reconstructed value, breaking the error bound.
+    Two exactness guards apply when NEAR > 0:
+      - Any tile containing the null marker (BLANK for integer images, the
+        quantized COMPRESS_NULL_VALUE for float images) is encoded
+        losslessly: NEAR could perturb the marker itself (nulls decoding as
+        valid-looking values) or perturb a valid pixel onto the marker
+        (false nulls).  Since NEAR is per-codestream, decoders handle
+        mixed lossless/near-lossless tiles automatically.
+      - For 32-bit tiles the decoder saturates the reconstruction at
+        2^32-1 when the low plane was coded with NEAR > 0: the NEAR error
+        could otherwise wrap (split + baseline) past 2^32-1 for values
+        within NEAR of the top of the range, turning an error of at most
+        NEAR into one of ~2^32.  Saturation stays within the NEAR bound.
+        Lossless tiles skip the guard; their modulo-2^32 arithmetic is
+        exact and the wrapped null-marker pixels depend on it.
 
   * Output buffer sizing.  JPEG-LS can *expand* incompressible data, so the
     output can exceed the input.  Rather than always allocating the worst
@@ -376,11 +398,13 @@ static int imcomp_jpegls_encode(const void *source, size_t pixel_count, int byte
 }
 /*--------------------------------------------------------------------------*/
 static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size, int bytes_per_sample,
-    size_t pixel_count, void *dest)
+    size_t pixel_count, void *dest, int *near_out)
 {
 #ifndef HAVE_CHARLS
     (void) source; (void) source_size; (void) bytes_per_sample;
     (void) pixel_count; (void) dest;
+    if (near_out)
+        *near_out = 0;
     ffpmsg("Cannot decompress a JPEG-LS tile: CFITSIO was built without CharLS.");
     ffpmsg("Run 'git submodule update --init', build charls/, then rebuild.");
     return DATA_DECOMPRESSION_ERR;
@@ -405,6 +429,16 @@ static int imcomp_jpegls_decode(const unsigned char *source, size_t source_size,
                 err = CHARLS_JPEGLS_ERRC_INVALID_ARGUMENT;
             }
         }
+    }
+
+    /* Report the stream's NEAR parameter so callers can distinguish
+       lossless from near-lossless tiles (needed by the 32-bit split
+       reconstruction's overflow guard). */
+    if (!err && near_out) {
+        int32_t stream_near = 0;
+        err = charls_jpegls_decoder_get_near_lossless(decoder, 0, &stream_near);
+        if (!err)
+            *near_out = (int) stream_near;
     }
 
     /* Decode directly to output buffer (caller handles any required conversions) */
@@ -1764,8 +1798,9 @@ int imcomp_calc_max_elem (int comptype, int nx, int zbitpix, int blocksize)
             return(nx * 2 + 1024);
         else
             /* 32-bit tiles are split into two 16-bit planes, each encoded as
-               its own JPEG-LS stream, preceded by a 4-byte length header. */
-            return(nx * 4 + 1024 + 4);
+               its own JPEG-LS stream, preceded by an 8-byte header (4-byte
+               upper-plane length + 4-byte tile baseline). */
+            return(nx * 4 + 1024 + 8);
     }
      else if (comptype == HCOMPRESS_1)
     {
@@ -2393,6 +2428,53 @@ int imcomp_compress_tile (fitsfile *outfptr,
             int too_small = 0;
             int attempt;
 
+            /* Null pixels must survive compression exactly: on decode they
+               are recognized by comparing against the null marker (BLANK for
+               integer images, COMPRESS_NULL_VALUE for quantized float
+               images), and near-lossless coding may perturb any value by up
+               to NEAR -- turning nulls into valid-looking values and valid
+               pixels within NEAR of the marker into false nulls.  So any
+               tile that contains the marker is encoded losslessly.  NEAR is
+               recorded per codestream, so decoding needs no extra metadata
+               to handle a mix of lossless and near-lossless tiles.  For
+               32-bit tiles the marker also matters when NEAR = 0: the
+               baseline rebase below excludes null pixels so one null cannot
+               forfeit the rebase for the whole tile. */
+            int null_marker = 0;
+            int marker_defined = 0;
+            int tile_has_nulls = 0;
+
+            if (zbitpix == FLOAT_IMG || zbitpix == DOUBLE_IMG) {
+                /* marker used by fits_quantize_float/_double */
+                null_marker = COMPRESS_NULL_VALUE;
+                marker_defined = 1;
+            } else if (cn_zblank != 0) {
+                /* BLANK/ZBLANK is defined for this integer image */
+                null_marker = nullval;
+                marker_defined = 1;
+            }
+
+            if (marker_defined && max_err > 0) {
+                if (bytes_per_sample == 1) {
+                    const unsigned char *chk = (const unsigned char *) idata;
+                    for (ii = 0; ii < (long) pixel_count; ii++) {
+                        if (chk[ii] == (unsigned char) null_marker) {
+                            tile_has_nulls = 1;
+                            break;
+                        }
+                    }
+                } else if (bytes_per_sample == 2) {
+                    const short *chk = (const short *) idata;
+                    for (ii = 0; ii < (long) pixel_count; ii++) {
+                        if (chk[ii] == (short) null_marker) {
+                            tile_has_nulls = 1;
+                            break;
+                        }
+                    }
+                }
+                /* 4-byte tiles are checked during the baseline scan below */
+            }
+
             /* cbuf is sized optimistically (see imcomp_calc_max_elem), which
                succeeds for essentially all real data.  JPEG-LS may expand
                incompressible data past that, so if the encoder reports the
@@ -2409,7 +2491,7 @@ int imcomp_compress_tile (fitsfile *outfptr,
                     const unsigned char *src = (const unsigned char *) idata;
                     *status = imcomp_jpegls_encode(src, pixel_count, bytes_per_sample,
                         (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny,
-                        max_err, &too_small);
+                        tile_has_nulls ? 0 : max_err, &too_small);
                 } else if (bytes_per_sample == 2) {
                     uint16_t *tmpbuf = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
                     if (!tmpbuf) {
@@ -2426,7 +2508,7 @@ int imcomp_compress_tile (fitsfile *outfptr,
 
                     *status = imcomp_jpegls_encode(tmpbuf, pixel_count, bytes_per_sample,
                         (unsigned char *) cbuf, clen, &bytes_written, tilenx, tileny,
-                        max_err, &too_small);
+                        tile_has_nulls ? 0 : max_err, &too_small);
                     free(tmpbuf);
                 } else if (bytes_per_sample == 4) {
                     const int *src = (const int *) idata;
@@ -2450,21 +2532,48 @@ int imcomp_compress_tile (fitsfile *outfptr,
                        local prediction. Subtracting the tile's own minimum makes
                        the split track the tile's actual local range instead of a
                        fixed global boundary; the baseline is stored alongside
-                       upper_len so decode can undo it. */
-                    uint32_t tile_min = (uint32_t)((int64_t) src[0] + 0x80000000ULL);
-                    for (ii = 1; ii < (long) pixel_count; ii++) {
-                        uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL);
-                        if (uval < tile_min) tile_min = uval;
+                       upper_len so decode can undo it.
+
+                       Null-marker pixels are excluded from the minimum: the
+                       marker is a huge negative reserved value, and letting it
+                       set the baseline would put the tile's real pixels back at
+                       their raw absolute offsets, forfeiting the rebase.  The
+                       excluded pixels simply wrap modulo 2^32 in the split
+                       below, and the decoder's modulo-2^32 reconstruction
+                       recovers them exactly (such tiles are always encoded
+                       losslessly, see tile_has_nulls above). */
+                    uint32_t tile_min = 0;
+                    int min_found = 0;
+                    for (ii = 0; ii < (long) pixel_count; ii++) {
+                        uint32_t uval;
+                        if (marker_defined && src[ii] == null_marker) {
+                            tile_has_nulls = 1;
+                            continue;
+                        }
+                        uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL);
+                        if (!min_found || uval < tile_min) {
+                            tile_min = uval;
+                            min_found = 1;
+                        }
                     }
+                    if (!min_found)  /* every pixel is null; any baseline is exact */
+                        tile_min = (uint32_t)((int64_t) null_marker + 0x80000000ULL);
+
                     /* Escape hatch for testing/benchmarking the rebase itself:
                        CFITSIO_JPEGLS_NO_TILE_BASELINE forces baseline to 0,
                        reproducing the old behavior of splitting the raw
                        offset value with no per-tile rebase. */
                     uint32_t baseline = getenv("CFITSIO_JPEGLS_NO_TILE_BASELINE") ? 0 : tile_min;
 
+                    /* Tiles containing nulls must be exact (see above). */
+                    int tile_max_err = tile_has_nulls ? 0 : max_err;
+
+                    int upper_all_zero = 1;
                     for (ii = 0; ii < (long) pixel_count; ii++) {
                         uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL) - baseline;
                         upper[ii] = (uint16_t)(uval >> 16);
+                        if (upper[ii])
+                            upper_all_zero = 0;
                         lower[ii] = (uint16_t)(uval & 0xFFFFU);
                     }
 
@@ -2483,15 +2592,25 @@ int imcomp_compress_tile (fitsfile *outfptr,
                        1 there becomes 65536 in the reconstructed 32-bit value.
                        Applying NEAR to the low plane alone keeps the total
                        absolute error within max_err, as promised. */
-                    *status = imcomp_jpegls_encode(upper, pixel_count, 2,
-                        payload, remaining, &upper_written, tilenx, tileny,
-                        0, &too_small);
+                    if (upper_all_zero) {
+                        /* Common case: after the rebase, a tile whose range
+                           fits in 16 bits has an identically-zero upper
+                           plane.  Signal it with upper_len = 0 instead of
+                           spending a JPEG-LS stream on it; the decoder
+                           reconstructs the zero plane directly. */
+                        upper_written = 0;
+                        *status = 0;
+                    } else {
+                        *status = imcomp_jpegls_encode(upper, pixel_count, 2,
+                            payload, remaining, &upper_written, tilenx, tileny,
+                            0, &too_small);
+                    }
                     if (!*status) {
                         payload += upper_written;
                         remaining -= upper_written;
                         *status = imcomp_jpegls_encode(lower, pixel_count, 2,
                             payload, remaining, &lower_written, tilenx, tileny,
-                            max_err, &too_small);
+                            tile_max_err, &too_small);
                     }
 
                     free(upper);
@@ -4733,7 +4852,7 @@ int fits_decompress_img (fitsfile *infptr, /* image (bintable) to uncompress */
     /* uncompress the entire image into memory */
     /* This routine should be enhanced sometime to only need enough */
     /* memory to uncompress one tile at a time.  */
-    fits_read_compressed_img(infptr, datatype, fpixel, lpixel, inc,  
+    fits_read_compressed_img(infptr, datatype, fpixel, lpixel, inc,
             nullcheck, nulladdr, data, NULL, &anynul, status);
 
     /* write the image to the output file */
@@ -5439,18 +5558,52 @@ int fits_read_write_compressed_img(fitsfile *fptr,   /* I - FITS file pointer   
 
                /* write the image to the output file */
 
-              if (tilenul && anynul) {     
-                   /* this assumes that the tiled pixels are in the same order
-		      as in the uncompressed FITS image.  This is not necessarily
-		      the case, but it almost alway is in practice.  
-		      Note that null checking is not performed for integer images,
-		      so this could only be a problem for tile compressed floating
-		      point images that use an unconventional tiling pattern.
-		   */
+              if (tilenul && (datatype == TFLOAT || datatype == TDOUBLE)) {
+                   /* The tile contains undefined pixels, marked in the
+                      buffer with the caller's nullval.  The historical code
+                      here wrote null-bearing tiles with fits_write_imgnull
+                      at a running linear offset (firstelem), which silently
+                      assumes every tile spans the full image width.  That
+                      holds for the traditional row-by-row tiling, but true
+                      2D tiles (e.g. the 512x512 JPEG-LS default) got their
+                      pixels scattered across the output image.  Instead,
+                      substitute the FITS null representation for float
+                      images (NaN) directly in the tile buffer, then write
+                      it with the strided fits_write_subset, which places
+                      every tile shape correctly. */
+                   long jj;
+                   if (datatype == TFLOAT) {
+                       float *fbuf = (float *) buffer;
+                       float fnul = *(float *) nullval;
+                       float qnanf;
+                       unsigned int qnanbits4 = 0x7FC00000u;
+                       memcpy(&qnanf, &qnanbits4, sizeof qnanf);
+                       for (jj = 0; jj < thistilesize[0]; jj++)
+                           if (fbuf[jj] == fnul)
+                               fbuf[jj] = qnanf;
+                   } else {
+                       double *dbuf = (double *) buffer;
+                       double dnul = *(double *) nullval;
+                       double qnand;
+                       ULONGLONG qnanbits8 = 0x7FF8000000000000ULL;
+                       memcpy(&qnand, &qnanbits8, sizeof qnand);
+                       for (jj = 0; jj < thistilesize[0]; jj++)
+                           if (dbuf[jj] == dnul)
+                               dbuf[jj] = qnand;
+                   }
+                   fits_write_subset(outfptr, datatype, tfpixel, tlpixel,
+                       buffer, status);
+              } else if (tilenul && anynul) {
+                   /* Non-float datatype with undefined pixels: keep the
+                      historical linear-offset write.  This branch is not
+                      reached by fits_img_decompress (it enables null
+                      checking only for float and double images), and the
+                      linear offset is only correct when tiles span the
+                      full image width. */
                    fits_write_imgnull(outfptr, datatype, firstelem, thistilesize[0],
 		      buffer, nullval, status);
               } else {
-                  fits_write_subset(outfptr, datatype, tfpixel, tlpixel, 
+                  fits_write_subset(outfptr, datatype, tfpixel, tlpixel,
 		      buffer, status);
               }
 
@@ -6984,7 +7137,7 @@ int imcomp_decompress_tile (fitsfile *infptr,
 
         if (bytes_per_sample == 1) {
             *status = imcomp_jpegls_decode(cbuf, (size_t) nelemll, bytes_per_sample,
-                pixel_count, idata);
+                pixel_count, idata, NULL);
             tiledatatype = TBYTE;
         } else if (bytes_per_sample == 2) {
             uint16_t *tmpbuf = (uint16_t *) malloc(pixel_count * sizeof(uint16_t));
@@ -6996,7 +7149,7 @@ int imcomp_decompress_tile (fitsfile *infptr,
             }
 
             *status = imcomp_jpegls_decode(cbuf, (size_t) nelemll, bytes_per_sample,
-                pixel_count, tmpbuf);
+                pixel_count, tmpbuf, NULL);
             if (*status == 0) {
                 short *dest = (short *) idata;
                 for (ii = 0; ii < tilelen; ii++)
@@ -7050,20 +7203,47 @@ int imcomp_decompress_tile (fitsfile *infptr,
                 return (*status = MEMORY_ALLOCATION);
             }
 
-            *status = imcomp_jpegls_decode(upper_src, (size_t) upper_len32, 2,
-                pixel_count, upper_tmp);
+            int lower_near = 0;
+
+            if (upper_len32 == 0) {
+                /* upper_len = 0 means the encoder found an identically-zero
+                   upper plane (tile range fit in 16 bits after the baseline
+                   rebase) and stored no stream for it. */
+                memset(upper_tmp, 0, pixel_count * sizeof(uint16_t));
+            } else {
+                *status = imcomp_jpegls_decode(upper_src, (size_t) upper_len32, 2,
+                    pixel_count, upper_tmp, NULL);
+            }
             if (*status == 0) {
                 *status = imcomp_jpegls_decode(lower_src, lower_len, 2,
-                    pixel_count, lower_tmp);
+                    pixel_count, lower_tmp, &lower_near);
             }
             if (*status == 0) {
                 /* Reassemble each 32-bit sample from its two 16-bit planes and
                    undo the 2^31 offset applied at encode time.  The subtraction
-                   is done in int64 so the intermediate cannot overflow. */
+                   is done in int64 so the intermediate cannot overflow.
+
+                   Near-lossless guard: when the low plane was coded with
+                   NEAR > 0, its error can push (split + baseline) past
+                   2^32-1 for original values within NEAR of the top of the
+                   range; unguarded uint32 wraparound would turn an error of
+                   at most NEAR into one of ~2^32.  Saturate at 2^32-1
+                   instead, which stays within the NEAR bound (the original
+                   must have been within NEAR of the top for the overflow to
+                   happen at all).  Lossless tiles (NEAR = 0) skip the guard:
+                   there the arithmetic is exact modulo 2^32, and excluded
+                   null-marker pixels below the baseline rely on that
+                   wraparound to reconstruct exactly. */
                 int *dest = idata;
+                uint32_t max_split = 0xFFFFFFFFu - baseline;
                 for (ii = 0; ii < tilelen; ii++) {
-                    uint32_t uval = (((uint32_t)upper_tmp[ii] << 16) |
-                                    (uint32_t)lower_tmp[ii]) + baseline;
+                    uint32_t split = ((uint32_t)upper_tmp[ii] << 16) |
+                                     (uint32_t)lower_tmp[ii];
+                    uint32_t uval;
+                    if (lower_near > 0 && split > max_split)
+                        uval = 0xFFFFFFFFu;
+                    else
+                        uval = split + baseline;
                     dest[ii] = (int)((int64_t) uval - 0x80000000ULL);
                 }
             }
