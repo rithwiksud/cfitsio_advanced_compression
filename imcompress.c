@@ -2456,7 +2456,11 @@ int imcomp_compress_tile (fitsfile *outfptr,
                         uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL);
                         if (uval < tile_min) tile_min = uval;
                     }
-                    uint32_t baseline = tile_min;
+                    /* Escape hatch for testing/benchmarking the rebase itself:
+                       CFITSIO_JPEGLS_NO_TILE_BASELINE forces baseline to 0,
+                       reproducing the old behavior of splitting the raw
+                       offset value with no per-tile rebase. */
+                    uint32_t baseline = getenv("CFITSIO_JPEGLS_NO_TILE_BASELINE") ? 0 : tile_min;
 
                     for (ii = 0; ii < (long) pixel_count; ii++) {
                         uint32_t uval = (uint32_t)((int64_t) src[ii] + 0x80000000ULL) - baseline;
