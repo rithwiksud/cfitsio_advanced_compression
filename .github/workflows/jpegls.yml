@@ -1,9 +1,11 @@
 name: JPEG-LS Tests
 
 # Builds CharLS from the vendored submodule, builds fpack/funpack, and runs
-# the JPEG-LS test suite: round-trip correctness, near-lossless max-error
-# bounds, and the lossless compression-ratio comparison against Rice,
-# Hcompress and GZIP.
+# the JPEG-LS test suite: round-trip correctness for 8/16/32-bit data and a
+# lossless compression-ratio comparison against Rice. This workflow has no
+# Python or third-party dependency of any kind -- everything runs through
+# CFITSIO's own C API and CLI tools, so it stays mergeable upstream without
+# introducing a new dependency.
 
 on:
   push:
@@ -39,14 +41,6 @@ jobs:
           sudo apt-get install -y build-essential libtool autoconf automake \
                                   libcurl4-openssl-dev zlib1g-dev
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Install Python test dependencies
-        run: python -m pip install --upgrade pip numpy astropy
-
       - name: Build CharLS
         run: |
           cmake -S charls -B charls/build \
@@ -59,35 +53,41 @@ jobs:
       - name: Configure CFITSIO
         run: ./configure
 
-      - name: Build fpack and funpack
+      - name: Build fpack, funpack and libcfitsio
         run: make fpack funpack -j
 
-      # NOT a help-text grep: fpack's usage text lists -jN whether or not CharLS
-      # was compiled in, so grepping it would pass even on a build with JPEG-LS
-      # stubbed out.  Actually compress something and require it to work.
-      - name: Smoke test - JPEG-LS is really compiled in
+      - name: Build the JPEG-LS C test suite and smoke-test helper
         run: |
-          python3 -c "
-          from astropy.io import fits; import numpy as np
-          fits.PrimaryHDU(np.arange(256*256, dtype=np.int16).reshape(256,256)
-                          ).writeto('smoke.fit', overwrite=True)"
+          gcc -o test_jpegls_compression test_jpegls_compression.c \
+            -I. -L./.libs -lcfitsio -lm
+          gcc -o ci/smoke_test_helper ci/smoke_test_helper.c \
+            -I. -L./.libs -lcfitsio -lm
+
+      # Covers 8/16/32-bit lossless round-trip through the C API directly
+      # (not fpack/funpack), plus a compression-ratio comparison vs Rice.
+      - name: Round-trip and compression-ratio tests (C API)
+        run: |
+          export DYLD_LIBRARY_PATH="$PWD/.libs:$DYLD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$PWD/.libs:$LD_LIBRARY_PATH"
+          ./test_jpegls_compression
+
+      # NOT a help-text grep: fpack's usage text lists -jN whether or not
+      # CharLS was compiled in, so grepping it would pass even on a build
+      # with JPEG-LS stubbed out. Actually compress something and require
+      # it to work. fpack/funpack add HISTORY/CHECKSUM cards on write, so
+      # comparison is pixel data only (via the smoke-test helper), not a
+      # raw byte diff of the two files.
+      - name: Smoke test - JPEG-LS is really compiled in via fpack/funpack
+        run: |
+          export DYLD_LIBRARY_PATH="$PWD/.libs:$DYLD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$PWD/.libs:$LD_LIBRARY_PATH"
+          rm -f smoke.fit smoke.fit.fz smoke_out.fit
+          ./ci/smoke_test_helper create smoke.fit 256 256
           ./fpack -j smoke.fit
           test -f smoke.fit.fz || { echo 'fpack -j produced no output'; exit 1; }
           ./funpack -O smoke_out.fit smoke.fit.fz
-          python3 -c "
-          from astropy.io import fits; import numpy as np, sys
-          a = fits.getdata('smoke.fit'); b = fits.getdata('smoke_out.fit')
-          sys.exit(0 if np.array_equal(a, b) else 'JPEG-LS round-trip mismatch')"
+          ./ci/smoke_test_helper compare smoke.fit smoke_out.fit
           rm -f smoke.fit smoke.fit.fz smoke_out.fit
-
-      - name: Round-trip and near-lossless max-error tests
-        run: python3 test_jpegls_nearlossless.py
-
-      - name: Null-pixel, saturation and container-guard tests
-        run: python3 test_jpegls_guards.py
-
-      - name: Lossless compression-ratio comparison
-        run: python3 test_jpegls_compression_ratio.py
 
   cmake-build:
     name: CMake build (${{ matrix.os }})
@@ -141,11 +141,12 @@ jobs:
 
       - name: Rice still works
         run: |
-          python3 -m pip install --quiet numpy astropy
-          python3 -c "
-          from astropy.io import fits; import numpy as np
-          fits.PrimaryHDU(np.arange(128*128, dtype=np.int16).reshape(128,128)
-                          ).writeto('t.fit', overwrite=True)"
+          export DYLD_LIBRARY_PATH="$PWD/.libs:$DYLD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$PWD/.libs:$LD_LIBRARY_PATH"
+          gcc -o ci/smoke_test_helper ci/smoke_test_helper.c \
+            -I. -L./.libs -lcfitsio -lm
+          rm -f t.fit t.fit.fz
+          ./ci/smoke_test_helper create t.fit 128 128
           ./fpack -r t.fit && test -f t.fit.fz
 
       - name: JPEG-LS fails cleanly rather than crashing or silently succeeding
