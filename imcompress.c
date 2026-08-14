@@ -1244,21 +1244,17 @@ int imcomp_init_table(fitsfile *outfptr,
        }
     }
 
-    /* warn that near-lossless JPEG-LS (NEAR > 0) on a floating point image */
-    /* compounds with the float->int quantization step: the NEAR error is  */
-    /* incurred in already-quantized integer units, then gets rescaled by  */
-    /* BSCALE on decode, so the resulting error in physical (float) units  */
-    /* is BSCALE-dependent and not simply equal to the requested N.  This  */
-    /* does not set *status: compression proceeds, this is advisory only. */
+    /* Near-lossless JPEG-LS (NEAR > 0) on a floating point image is not
+       supported: the NEAR error would be incurred in already-quantized
+       integer units and rescaled by the per-tile BSCALE on decode, so the
+       error in physical (float) units would be unpredictable.  Lossless
+       JPEG-LS (NEAR = 0) of floats via quantization is fine. */
     if ( (inbitpix < 0) &&
          ((outfptr->Fptr)->request_compress_type == JPEGLS_1) &&
          ((outfptr->Fptr)->request_jpegls_maxerr > 0) ) {
-       fprintf(stderr, "Warning: JPEG-LS near-lossless (NEAR=%d) on a "
-               "floating point image adds error on top of the float->int "
-               "quantization step, in units of the (per-tile) BSCALE; the "
-               "resulting error in physical units is therefore less "
-               "predictable than for integer images.\n",
-               (outfptr->Fptr)->request_jpegls_maxerr);
+       ffpmsg("Near-lossless JPEG-LS compression of floating point images is not supported (imcomp_init_table)");
+       ffpmsg(" use lossless JPEG-LS (max error 0) for floating point images");
+       return(*status = DATA_COMPRESSION_ERR);
     }
 
      /* set default compression parameter values, if undefined */

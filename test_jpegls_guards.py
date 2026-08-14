@@ -21,6 +21,10 @@ Covers the null-pixel and overflow guarantees of the JPEG-LS path, plus the
   6. funpack places null-bearing float tiles correctly with 2D tilings
      (regression for the shared fits_read_write_compressed_img linear-offset
      bug; tested for JPEG-LS and for RICE with -t 512,512).
+  7. Near-lossless JPEG-LS (-jN, N > 0) on a floating point image is
+     rejected outright: the NEAR error would compound with the float->int
+     quantization step in a BSCALE-dependent way. Lossless JPEG-LS (-j0)
+     of floats via quantization remains supported.
 
 Usage:  python3 test_jpegls_guards.py
 """
@@ -117,20 +121,29 @@ def main():
         check("NEAR bound holds elsewhere", err.max() <= 5, f"max={err.max()}")
 
         # ------------------------------------------------------------------
-        print("== null preservation: float32 + NaN (quantized), -j2 and -j0 ==")
+        print("== null preservation: float32 + NaN (quantized), -j0 ==")
         d = rng.normal(100.0, 5.0, (600, 700)).astype(np.float32)
         d[10:20, 10:20] = np.nan
         m = ~np.isnan(d)
-        for flag in ("-j2", "-j0"):
-            out, _ = roundtrip(d, [flag], tmpdir)
-            check(f"{flag}: NaN mask bit-exact",
-                  np.array_equal(np.isnan(out), np.isnan(d)),
-                  f"in={np.isnan(d).sum()} out={np.isnan(out).sum()}")
-            # quantize level 4, sigma 5 => delta 1.25; NEAR=2 adds 2*delta
-            bound = 3.2 if flag == "-j2" else 0.7
-            check(f"{flag}: values within quantization bound",
-                  np.abs(out[m] - d[m]).max() <= bound,
-                  f"max={np.abs(out[m] - d[m]).max()}")
+        out, _ = roundtrip(d, ["-j0"], tmpdir)
+        check("-j0: NaN mask bit-exact",
+              np.array_equal(np.isnan(out), np.isnan(d)),
+              f"in={np.isnan(d).sum()} out={np.isnan(out).sum()}")
+        # quantize level 4, sigma 5 => delta 1.25
+        check("-j0: values within quantization bound",
+              np.abs(out[m] - d[m]).max() <= 0.7,
+              f"max={np.abs(out[m] - d[m]).max()}")
+
+        # ------------------------------------------------------------------
+        print("== near-lossless JPEG-LS on floats is rejected ==")
+        src = os.path.join(tmpdir, "reject.fit")
+        for f in (src, src + ".fz"):
+            if os.path.exists(f):
+                os.remove(f)
+        fits.PrimaryHDU(d).writeto(src)
+        ok, msg = run([FPACK, "-j2", src])
+        check("-j2 on float image fails",
+              not ok and not os.path.exists(src + ".fz"), msg[:160])
 
         # ------------------------------------------------------------------
         print("== shared funpack fix: RICE with 2D tiles, float + NaN ==")
