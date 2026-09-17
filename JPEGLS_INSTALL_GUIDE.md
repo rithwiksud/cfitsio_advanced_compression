@@ -1,42 +1,156 @@
 # Using JPEG-LS-enabled CFITSIO in an existing C project
 
 This guide is for someone who already has a C project that links against
-stock CFITSIO and wants to read FITS files that were compressed with
-JPEG-LS (`ZCMPTYPE = 'JPEGLS_1'`). It walks through building the
-JPEG-LS-enabled fork and swapping it into an existing build, on macOS.
+stock CFITSIO and wants it to handle FITS files compressed with JPEG-LS
+(`ZCMPTYPE = 'JPEGLS_1'`).
 
-You will **not** need to change any of your existing C source code.
-`fits_open_file`, `fits_read_img`, `fits_read_pix`, etc. all decompress
-JPEG-LS tiles automatically, the same way they already handle RICE or
-GZIP. The only change is *which* CFITSIO library your project links
-against.
+**No C source changes are needed to read JPEG-LS files.**
+`fits_open_file`, `fits_read_img`, `fits_read_pix` and the rest decompress
+JPEG-LS tiles automatically, exactly as they already handle RICE or GZIP.
+The only thing that changes is *which* CFITSIO your project uses.
 
-## Two ways to do this
+Writing JPEG-LS is different: `JPEGLS_1` and `fits_set_jpegls_maxerr()`
+do not exist in stock `fitsio.h`, so code that *creates* JPEG-LS files must
+be recompiled against the new header.
 
-- **Option A — repoint your build files.** Build the fork somewhere on
-  disk and update your project's `-I`/`-L` flags to point at it.
-  Doesn't touch anything outside your project; easy to undo. Requires
-  a small build-file edit.
-- **Option B — install in place over your existing CFITSIO.** Build the
-  fork with the same install prefix your current CFITSIO uses, and
-  `make install` overwrites it. Your project's build files need only
-  the CharLS link flags added. Simpler day-to-day, but it mutates a
-  shared system location, so read the caveats before choosing it.
+## Three ways to do this
 
-Steps 1–3 (get the code, build CharLS, build CFITSIO) are the same for
-both options. They diverge at Step 4.
+| | What it does | Best when |
+|---|---|---|
+| **Option A** | Build the fork somewhere and repoint your project's `-I`/`-L` flags at it | You want to change nothing outside your own project |
+| **Option B** | Build the fork and install it over your existing CFITSIO prefix | Your project links `-lcfitsio` with no hardcoded path |
+| **Option C** | `brew tap` + `brew install` (macOS) | You are on macOS and want the shortest path |
+
+Option C is the least work and needs no build steps; start there if you are
+on macOS. Options A and B share Steps 1-3 below and diverge at Step 4.
 
 ## Prerequisites
 
-- macOS with Xcode command line tools (`xcode-select --install`)
-- `cmake` (`brew install cmake` if you don't have it)
+- macOS with Xcode command line tools (`xcode-select --install`), or Linux
+- `cmake`
 - `git`
+
+---
+
+# Option C — Homebrew (macOS)
+
+```bash
+brew tap rithwiksud/astro https://github.com/rithwiksud/cfitsio_advanced_compression
+brew install rithwiksud/astro/cfitsio
+```
+
+This builds CharLS and CFITSIO, puts `fpack` and `funpack` on your `PATH`,
+and links `fitsio.h` and `libcfitsio.dylib` into `/opt/homebrew/include` and
+`/opt/homebrew/lib` — the same locations the stock `cfitsio` formula uses.
+It compiles from source and takes a minute or two.
+
+Check it worked:
+
+```bash
+fpack -j -O test.fits.fz your_image.fits    # -j = JPEG-LS
+```
+
+## Building your project
+
+Your existing link line works unchanged. No `-lcharls`, no `-lc++`, no
+rpath, no `DYLD_LIBRARY_PATH`:
+
+```bash
+gcc myprogram.c -I/opt/homebrew/include -L/opt/homebrew/lib -lcfitsio -lm -o myprogram
+```
+
+CharLS is compiled into `libcfitsio.dylib`, so there is nothing extra to
+resolve.
+
+## If you already have stock CFITSIO from Homebrew
+
+Both install the same files, so only one can be active. Swap:
+
+```bash
+brew uninstall cfitsio        # or: brew unlink cfitsio
+brew tap rithwiksud/astro https://github.com/rithwiksud/cfitsio_advanced_compression
+brew install rithwiksud/astro/cfitsio
+```
+
+To go back to stock at any time:
+
+```bash
+brew uninstall rithwiksud/astro/cfitsio
+brew install cfitsio
+```
+
+Programs that were already built against the Homebrew CFITSIO **do not need
+recompiling** to read JPEG-LS. The fork installs to the same
+`/opt/homebrew/opt/cfitsio` path and keeps the same library version
+(`SOVERSION 10`, 4.7.0), so existing binaries load the new library and gain
+JPEG-LS support as-is.
+
+Other Homebrew packages that link CFITSIO — `astrometry-net`, `gnuastro`,
+`healpix`, `montage` and roughly thirty others — keep working for the same
+reason: the fork is a superset of upstream 4.7.0. Check anything you depend
+on heavily before relying on this.
+
+## If your stock CFITSIO was NOT installed with Homebrew
+
+This is the case if you built CFITSIO from source (`./configure && make
+install`, or CMake), installed it from a package manager other than
+Homebrew, or got it as part of another toolchain. It usually lives in
+`/usr/local`, sometimes `/opt/local` (MacPorts) or a conda environment.
+
+Homebrew will not touch that installation. You now have two CFITSIOs on the
+machine, and the one your project picks depends entirely on its `-I`/`-L`
+flags. Find out what you have:
+
+```bash
+# where is the non-Homebrew one?
+find /usr/local /opt/local -name "fitsio.h" 2>/dev/null
+
+# which fpack is first on PATH?
+which -a fpack
+
+# which library does an already-built program use?
+otool -L myprogram | grep cfitsio        # Linux: ldd myprogram | grep cfitsio
+```
+
+Then pick one of these.
+
+**1. Point your project at the Homebrew copy explicitly.** Put the Homebrew
+paths *first* so they win:
+
+```bash
+gcc myprogram.c -I/opt/homebrew/include -L/opt/homebrew/lib -lcfitsio -lm -o myprogram
+```
+
+Confirm with `otool -L myprogram` that it resolves to
+`/opt/homebrew/opt/cfitsio/lib/libcfitsio.10.dylib` and not your old copy.
+This is the safest choice: your existing installation is left alone.
+
+**2. Or replace the old installation instead**, using Option B below with
+`<prefix>` set to wherever that CFITSIO lives (typically `/usr/local`). Then
+every project on the machine, including ones you have not rebuilt, gets
+JPEG-LS without any flag changes. Use this when the old installation is the
+one everything already points at.
+
+Do not install the fork over `/usr/local` *and* brew-install it. Two copies
+in two prefixes is exactly how you end up debugging which one a program
+loaded.
+
+## Caveats
+
+- Every install compiles from source; there are no prebuilt bottles.
+- **Python tooling is unaffected.** Astropy does not link `libcfitsio` (it
+  has its own compression code), and the PyPI `fitsio` package bundles its
+  own copy. Neither sees this change.
+- On Linux, Homebrew works but building from source (Options A/B) is the
+  usual route.
+
+---
+
+# Options A and B — build from source
 
 ## Step 1: Get the code
 
-The fork's one dependency, CharLS (the JPEG-LS codec library), is
-included as a git submodule, so a recursive clone fetches both. Clone
-wherever you like; this guide uses `~/dev`:
+CharLS (the JPEG-LS codec) is a git submodule, so clone recursively:
 
 ```bash
 mkdir -p ~/dev && cd ~/dev
@@ -44,22 +158,19 @@ git clone --recursive https://github.com/rithwiksud/cfitsio_advanced_compression
 cd cfitsio_advanced_compression
 ```
 
-Already cloned without `--recursive`? From inside the repo, run:
+If you already cloned without `--recursive`:
 
 ```bash
 git submodule update --init
 ```
 
-Either way you should now have CharLS inside the repo:
+Either way, confirm CharLS is present:
 
 ```bash
 ls charls/include/charls/charls.h
 ```
 
 ## Step 2: Build CharLS
-
-CharLS is a small, self-contained library. From the repo root, build it
-as a static library:
 
 ```bash
 cmake -S charls -B charls/build -DCMAKE_BUILD_TYPE=Release \
@@ -68,89 +179,80 @@ cmake -S charls -B charls/build -DCMAKE_BUILD_TYPE=Release \
 cmake --build charls/build -j
 ```
 
-When this finishes you should have `charls/build/libcharls.a`:
+This produces `charls/build/libcharls.a`.
 
-```bash
-ls charls/build/libcharls.a
-```
+## Step 3: Build CFITSIO
 
-## Step 3: Build the JPEG-LS-enabled CFITSIO
-
-Still in the repo root. The Makefile detects `charls/` automatically and
-adds the CharLS include/link flags itself, so no extra configure
-arguments are needed:
+The Makefile finds `charls/` on its own and adds the include and link flags,
+so no extra configure arguments are needed:
 
 ```bash
 ./configure
 make -j
 ```
 
-**If `make` dies on `testf77` with `ld: library 'curl' not found`**, add
-`--without-fortran` and re-run:
+**If `make` stops on `testf77` with `ld: library 'curl' not found`**, rebuild
+without Fortran:
 
 ```bash
 ./configure --without-fortran
 make -j
 ```
 
-This happens on macOS when `gfortran` comes from Homebrew GCC: it does not
-search the macOS SDK where `libcurl.tbd` lives, while clang does. Only the
-Fortran *test program* fails — the C library, `fpack` and `funpack` are all
-built fine — but the failure stops the build, and it stops `make install`
-from installing anything at all. Nothing in JPEG-LS needs Fortran.
+That failure comes from a Homebrew `gfortran`, which does not search the
+macOS SDK where `libcurl.tbd` lives. Only the Fortran test program is
+affected — the C library, `fpack` and `funpack` build fine — but the failure
+stops the build and silently prevents `make install` from installing
+anything. Nothing in JPEG-LS uses Fortran.
 
-This produces the library your project needs, along with `fpack`/`funpack`
-command-line tools:
+You now have:
 
 ```
 ~/dev/cfitsio_advanced_compression/.libs/libcfitsio.a       (static)
-~/dev/cfitsio_advanced_compression/.libs/libcfitsio.dylib   (shared, if built)
-~/dev/cfitsio_advanced_compression/fitsio.h                 (same API as stock CFITSIO)
+~/dev/cfitsio_advanced_compression/.libs/libcfitsio.dylib   (shared)
+~/dev/cfitsio_advanced_compression/fitsio.h                 (same API, plus JPEG-LS)
 ```
 
-Sanity-check that JPEG-LS support actually compiled in, using any FITS
-image you have:
+Confirm JPEG-LS is compiled in, using any FITS image:
 
 ```bash
-./fpack -j test.fits    # -j = compress with JPEG-LS
+./fpack -j test.fits
 ```
 
-If that produces `test.fits.fz` without errors, the build is good. (If
-CharLS was missing at build time, CFITSIO still builds, but `-j` fails at
-run time.)
+If that writes `test.fits.fz` without errors, the build is good. If CharLS
+was missing at build time, CFITSIO still builds but `-j` fails at run time
+with "CFITSIO was built without CharLS".
 
 ## Step 4A: Option A — point your project at the new library
 
-In your existing project's build (Makefile, CMakeLists.txt, Xcode
-project settings, etc.), find wherever it currently references CFITSIO
-and change **both** the include path and the library path:
+In your project's Makefile, CMakeLists.txt or Xcode settings, change both
+the include path and the library path:
 
-**Before:**
+**Before**
 ```
 -I/path/to/old/cfitsio
 -L/path/to/old/cfitsio -lcfitsio
 ```
 
-**After:**
+**After**
 ```
 -I$HOME/dev/cfitsio_advanced_compression
 -L$HOME/dev/cfitsio_advanced_compression/.libs -lcfitsio
 ```
 
-You also need to link CharLS on the final link line, since the fork's
-`libcfitsio` calls into it. CharLS is written in C++, so the C++ runtime
-must be linked too, after `-lcharls` (`-lc++` on macOS, `-lstdc++` on
-Linux):
+CharLS must also be linked, along with the C++ runtime it needs
+(`-lc++` on macOS, `-lstdc++` on Linux), after `-lcharls`:
 
 ```
 -L$HOME/dev/cfitsio_advanced_compression/charls/build -lcharls -lc++
 ```
 
-**Linking is not enough: the program also has to *find* `libcfitsio` at run
-time.** `make` builds a shared library in `.libs/`, but the path recorded in
-your program points at the *install* directory (`<prefix>/lib`), which does
-not exist unless you ran `make install`. So a program linked as above can
-build cleanly and then fail to start:
+### Make sure the program can find the library at run time
+
+`make` leaves a shared library in `.libs/`, but the path recorded in your
+program points at the *install* directory, which does not exist until you run
+`make install`. A program linked against `.libs` can build cleanly and then
+fail to start:
 
 ```
 # Linux
@@ -159,12 +261,9 @@ libcfitsio.so.10: cannot open shared object file: No such file or directory
 dyld: Library not loaded: <prefix>/lib/libcfitsio.10.dylib
 ```
 
-Pick one of these two fixes.
-
-**Recommended: link CFITSIO statically.** Name the static archive directly
-instead of using `-lcfitsio`. There is no shared library to locate at run
-time, so there is no rpath and no `LD_LIBRARY_PATH` to manage, and CharLS is
-already a static archive anyway:
+**Recommended: link CFITSIO statically.** Name the archive directly instead
+of using `-lcfitsio`. There is then no shared library to locate, so no rpath
+and no `DYLD_LIBRARY_PATH` to manage:
 
 ```bash
 gcc myprogram.c \
@@ -174,12 +273,10 @@ gcc myprogram.c \
   -lm -lcurl -lz -o myprogram
 ```
 
-(`-lcurl` and `-lz` are needed here because a static CFITSIO no longer
-carries its own dependencies. Drop `-lcurl` if your CFITSIO was configured
-without curl.)
+`-lcurl` and `-lz` are required because a static CFITSIO no longer carries
+its own dependencies. Drop `-lcurl` if CFITSIO was configured without curl.
 
-**On Linux, the alternative is `-Wl,-rpath`**, which records where to look
-so no environment variable is needed:
+**On Linux**, `-Wl,-rpath` is an alternative:
 
 ```bash
 gcc myprogram.c \
@@ -190,197 +287,143 @@ gcc myprogram.c \
   -lm -o myprogram
 ```
 
-**This does not help on macOS**, and it is worth knowing why. Libtool gives
-`libcfitsio.dylib` an install_name that is the *absolute install path*
-(`<prefix>/lib/libcfitsio.10.dylib`), not `@rpath/libcfitsio.10.dylib`.
-Check it yourself with `otool -D .libs/libcfitsio.10.dylib`. dyld follows
-that absolute path and never consults the rpath, so adding `-Wl,-rpath`
-changes nothing: the program still looks in `<prefix>/lib`. Until you run
-`make install`, that path does not exist and the program aborts at startup.
+**`-Wl,-rpath` does not work on macOS here.** Libtool gives
+`libcfitsio.dylib` an install_name that is an absolute path
+(`<prefix>/lib/libcfitsio.10.dylib`) rather than `@rpath/...`; check with
+`otool -D .libs/libcfitsio.10.dylib`. dyld follows that absolute path and
+never consults the rpath. On macOS, link statically or use Option B.
 
-So on macOS, either link statically (above), or run `make install` first and
-link against `<prefix>/lib` as in Option B — after which no rpath is needed
-at all, because the install_name already points there.
+`DYLD_LIBRARY_PATH` (Linux: `LD_LIBRARY_PATH`) also works, but must be set by
+every user, script and service that runs the program, and it affects library
+resolution for the whole process. Prefer static linking or a real install.
 
-Setting `DYLD_LIBRARY_PATH` (Linux: `LD_LIBRARY_PATH`) on each invocation
-also works, but it has to be re-set by every user, script and service that
-runs the program, and it changes library resolution for the whole process,
-so prefer static linking or a real install for anything you intend to keep.
+If your build uses a variable like `CFITSIO_DIR`, repoint it at
+`~/dev/cfitsio_advanced_compression` and add the CharLS flags alongside.
 
-If your project uses a Makefile with a variable like `CFITSIO_DIR`,
-just repoint that variable at `~/dev/cfitsio_advanced_compression`
-and add the CharLS flags alongside it.
+Then go to Step 5.
 
-Skip to Step 5 if you're using this option.
+## Step 4B: Option B — install over your existing CFITSIO
 
-## Step 4B: Option B — install in place over your existing CFITSIO
+Use this when your project does `#include <fitsio.h>` and links `-lcfitsio`
+without a hardcoded path.
 
-If your project just does `#include <fitsio.h>` and links `-lcfitsio`
-with no hardcoded path to a specific CFITSIO checkout, you can instead
-overwrite your existing install with the JPEG-LS-enabled build.
-
-**1. Find where your current CFITSIO is installed.**
+**1. Find your current installation.**
 
 ```bash
-# if installed via Homebrew
-brew --prefix cfitsio
-# otherwise, find it directly
-find /usr /opt /usr/local -name "fitsio.h" 2>/dev/null
+brew --prefix cfitsio                                   # if it came from Homebrew
+find /usr /opt /usr/local -name "fitsio.h" 2>/dev/null   # otherwise
 ```
 
-This gives you a prefix, e.g. `/opt/homebrew` or `/usr/local`. Call it
-`<prefix>` below.
+That gives a prefix such as `/usr/local` or `/opt/homebrew`; call it
+`<prefix>`.
 
-**2. Install CharLS and CFITSIO to that prefix.**
-
-From the repo root (after Steps 1–2):
+**2. Install CharLS and CFITSIO there.**
 
 ```bash
-# CharLS, installed to the same prefix
 cmake --install charls/build --prefix <prefix>
 
-# CFITSIO fork, rebuilt and installed to the same prefix
-# (add --without-fortran if make dies on testf77; see Step 3)
 make clean
-./configure --prefix=<prefix>
+./configure --prefix=<prefix>          # add --without-fortran if needed
 make -j
 make install
 ```
 
-**The `make clean` is not optional on macOS.** If you already built the
-fork once (Step 3, without `--prefix`), the object files are unchanged, so
-`make` will not relink `libcfitsio.dylib` — and `make install` then copies a
-library whose install_name still points at the *old* location. Everything
-that links it, including the newly installed `fpack`, aborts at startup with
-`Library not loaded:` pointing at a path in your source tree. `make clean`
-forces the relink and the install_name comes out correct. Verify with:
+**`make clean` is required on macOS.** If you already built in Step 3 without
+`--prefix`, the object files are unchanged, so `make` will not relink
+`libcfitsio.dylib`, and `make install` copies a library whose install_name
+still points at the old location. Everything linking it — including the
+newly installed `fpack` — then aborts at startup with `Library not loaded:`
+naming a path in your source tree. Verify afterwards:
 
 ```bash
-otool -D <prefix>/lib/libcfitsio.10.dylib   # should print <prefix>/lib/...
+otool -D <prefix>/lib/libcfitsio.10.dylib    # must print <prefix>/lib/...
 ```
 
-`make install` overwrites `fitsio.h` and `libcfitsio.*` at `<prefix>`
-with the JPEG-LS-enabled versions. Any project that already builds
-against `-I<prefix>/include -L<prefix>/lib -lcfitsio` picks up the new
-library.
+This overwrites `fitsio.h` and `libcfitsio.*` at `<prefix>`, so any project
+building against `-I<prefix>/include -L<prefix>/lib -lcfitsio` picks up
+JPEG-LS.
 
-**3. Usually you don't have to change anything else.**
+**3. Usually nothing else changes.**
 
-If your project links the **shared** library (the default `-lcfitsio`), no
-build-file change is needed at all: CharLS is a static archive that gets
-absorbed into `libcfitsio.dylib`/`.so` when the fork is built, so there are
-no leftover CharLS symbols for your program to resolve. This was verified on
-macOS with a project whose Makefile was left completely untouched — it
-picked up JPEG-LS support purely from the reinstalled library.
+Projects linking the shared library need no build-file change: CharLS is
+absorbed into `libcfitsio.dylib`/`.so`, leaving no symbols for your program
+to resolve.
 
-You only need to add `-lcharls -lc++` (macOS) / `-lcharls -lstdc++` (Linux)
-if you link CFITSIO **statically**, where those symbols are still
-unresolved. `libcharls.a` is installed into `<prefix>/lib` alongside
-`libcfitsio`, so no new `-L` path is needed:
+Add `-lcharls -lc++` (macOS) or `-lcharls -lstdc++` (Linux) only if you link
+CFITSIO **statically**. `libcharls.a` is installed alongside `libcfitsio` in
+`<prefix>/lib`, so no extra `-L` is needed. Adding the flags when linking
+shared is harmless.
 
-```
--lcfitsio -lcharls -lc++
-```
+**Caveats:**
 
-Adding the flags when linking shared is harmless, so if you are unsure,
-add them.
+- If `<prefix>` is Homebrew-managed, a later `brew upgrade` or
+  `brew reinstall cfitsio` silently replaces your build with stock CFITSIO.
+  Use Option C on a Homebrew prefix instead.
+- Architecture must match (arm64 vs x86_64).
+- It is shared, system-wide state: every project using `<prefix>` gets the
+  fork. Usually harmless, since it is a superset of stock CFITSIO.
+- To undo, reinstall stock CFITSIO over the same prefix.
 
-**Caveats before choosing this option:**
+## Step 5: Verify
 
-- **Homebrew will fight you.** If `<prefix>` is Homebrew-managed
-  (`/opt/homebrew` or `/usr/local`), a later `brew upgrade` or
-  `brew reinstall cfitsio` will silently overwrite your JPEG-LS build
-  back to stock CFITSIO. Homebrew has no idea you replaced its files.
-  Either avoid touching a brewed prefix, or be ready to re-run this
-  install after any brew upgrade.
-- **Architecture must match** (arm64 vs. x86_64) — same as swapping any
-  native library in place.
-- **It's shared, system-wide state.** Any other project on the machine
-  linking against that same `<prefix>` now gets the JPEG-LS build too.
-  Usually harmless (it's a superset of stock CFITSIO's behavior), but
-  worth knowing.
-- **Harder to undo** than Option A — reverting means reinstalling stock
-  CFITSIO over it (`brew reinstall cfitsio`, or rebuilding upstream
-  CFITSIO with the same prefix).
+Run your program against a JPEG-LS file — one from `fpack -j`, or written by
+Astropy's `JPEGLS` codec. Existing read calls work unchanged.
 
-If none of that is a concern, this is the simpler day-to-day setup.
-
-## Step 5: Verify it works
-
-Run your program against a JPEG-LS-compressed FITS file (one produced
-by `fpack -j`, or by Astropy using the `JPEGLS` codec). Your existing
-read calls should just work — no source changes needed.
-
-If you don't have a test file handy, make one:
+To make a test file:
 
 ```bash
 ~/dev/cfitsio_advanced_compression/fpack -j some_image.fits
-# produces some_image.fits.fz — hand this to your program
 ```
 
-## Can I just hand someone a prebuilt `libcfitsio` dylib?
+---
 
-Tempting — it is what you would do for embedded firmware — but a macOS
-dynamic library is much less portable than a static firmware image, and a
-plain "drop this file in" hand-off is fragile. Facts from a library built
-on this machine (`otool`/`lipo` output):
+# Distributing a prebuilt dylib
 
-- **Architecture.** It came out `arm64` only. On an Intel Mac it will not
-  load at all. Distributing one file for everyone means a universal binary:
-  build with `-arch arm64 -arch x86_64`, or `lipo -create` two builds.
+Handing colleagues a prebuilt `libcfitsio.dylib` to drop into place is
+fragile on macOS, for reasons that are easy to miss:
+
+- **Architecture.** A normal build is single-architecture and will not load
+  on a Mac of the other kind. A distributable build needs
+  `-arch arm64 -arch x86_64`, or two builds joined with `lipo -create`.
 - **install_name.** The library records the absolute path it expects to live
-  at (`otool -D`). Drop it somewhere else and every program that links it
-  aborts with `Library not loaded:`. A distributable library must be built
-  with an install_name of `@rpath/libcfitsio.10.dylib` (the CMake build does
-  this; the autotools build does not), or patched afterwards with
-  `install_name_tool -id`.
-- **Minimum OS.** The build stamps `minos` from the SDK it was built
-  against. A library built on macOS 26 will be refused by older systems.
-  Build with `-mmacosx-version-min=` set to the oldest macOS you support.
-- **Gatekeeper.** A locally built library is only ad-hoc ("linker") signed.
-  Once it is downloaded from the internet it carries a quarantine attribute
-  and may be refused. Real distribution means signing with a Developer ID
-  and notarizing, or telling users to run `xattr -d com.apple.quarantine`.
-- **The header.** Shipping only the library gives existing programs the
-  ability to *read* JPEG-LS files, which needs no API change. Calling
-  `fits_set_jpegls_maxerr()` needs the matching `fitsio.h`, so ship both.
-- **Dependencies.** This build needs only `libSystem`, `libcurl`, `libz`
-  and `libc++`, all of which ship with macOS — so no third-party runtime
-  needs to travel with it. That part is genuinely portable. (If you build
-  against Homebrew's curl or zlib instead, it stops being portable.)
+  at (`otool -D`). Placed anywhere else, every program linking it aborts with
+  `Library not loaded:`. A distributable library needs an install_name of
+  `@rpath/libcfitsio.10.dylib` — the CMake build sets this, the autotools
+  build does not — or `install_name_tool -id` applied afterwards.
+- **Minimum OS.** The build records `minos` from the SDK it was built
+  against, and older systems refuse it. Set `-mmacosx-version-min=` to the
+  oldest macOS you support.
+- **Gatekeeper.** Locally built libraries are only ad-hoc signed. Once
+  downloaded they carry a quarantine attribute and may be refused; real
+  distribution means Developer ID signing and notarization.
+- **The header.** The library alone lets existing programs *read* JPEG-LS.
+  Calling `fits_set_jpegls_maxerr()` needs the matching `fitsio.h`, so ship
+  both.
+- **Dependencies** are only `libSystem`, `libcurl`, `libz` and `libc++`, all
+  of which ship with macOS — provided you did not build against Homebrew's
+  curl or zlib.
 
-If you want a true single-file hand-off, prefer the **static** library
-(`libcfitsio.a`, built universal): no install_name, no rpath, no dyld, and
-CharLS is already inside it. The trade is that users relink rather than
-swap a file.
+For a genuine single-file hand-off, prefer the static `libcfitsio.a` built
+universal: no install_name, no rpath, no dyld involvement, CharLS already
+inside. Recipients relink rather than swap a file.
 
-## Common pitfalls
+# Common pitfalls
 
-- **`fatal: Remote branch 3.0.0 not found`** — an older version of this
-  guide cloned CharLS separately with `--branch 3.0.0`, a tag that
-  doesn't exist. Use the submodule as in Step 1 instead.
-- **`charls/` is empty** — the fork was cloned without `--recursive`.
-  Run `git submodule update --init` from the repo root.
-- **"Undefined symbols for architecture..." at link time** — you're
-  missing `-lcharls`, the `-L` path to `charls/build`, or the C++
-  runtime (`-lc++`, which must come after `-lcharls`). The fork's
-  `libcfitsio` depends on CharLS; all must be linked.
-- **`make` fails with `ld: library 'curl' not found` on `testf77`** — a
-  Homebrew `gfortran` that can't see the macOS SDK's libcurl. Re-run
-  `./configure --without-fortran`. Note this also silently prevents
-  `make install` from installing anything, even with `make -k`.
-- **Builds fine, but fails to start**: `libcfitsio.so.10: cannot open
-  shared object file` (Linux) or `dyld: Library not loaded:
-  <prefix>/lib/libcfitsio.10.dylib` (macOS) — the program can't find the
-  shared library at run time, because the recorded path is the *install*
-  directory and you haven't run `make install`. On macOS `-Wl,-rpath`
-  will not fix this (see Step 4A); link statically or install first.
-- **Program still fails to read JPEG-LS tiles / says "unknown
-  compression type"** — your project is probably still picking up a
-  system-installed CFITSIO (e.g. from Homebrew, `/usr/local/lib`, or
-  `/opt/homebrew/lib`). Check `otool -L myprogram` after building — if
-  it lists a `libcfitsio` path that isn't the fork's `.libs` directory,
-  fix your `-L` order (put the fork's path first) or use static linking
-  to avoid ambiguity.
-- **Different machine/OS** — on Linux the steps are identical, except
-  link `-lstdc++` instead of `-lc++`.
+- **`charls/` is empty** — cloned without `--recursive`. Run
+  `git submodule update --init`.
+- **`make` fails with `ld: library 'curl' not found` on `testf77`** — use
+  `./configure --without-fortran`. This failure also prevents `make install`
+  from installing anything, even with `make -k`.
+- **"Undefined symbols for architecture…" at link time** — `-lcharls`, its
+  `-L` path, or the C++ runtime is missing. `-lc++`/`-lstdc++` must come
+  after `-lcharls`.
+- **Builds fine, fails to start** with `libcfitsio.so.10: cannot open shared
+  object file` (Linux) or `dyld: Library not loaded:` (macOS) — the recorded
+  library path is the install directory and you have not run `make install`.
+  On macOS `-Wl,-rpath` does not fix this; link statically or install.
+- **"Unknown image compression type" at run time** — the program is loading a
+  different CFITSIO. Run `otool -L myprogram` (Linux: `ldd`) and check which
+  `libcfitsio` it names; fix `-L` order or link statically.
+- **`fpack -j` says "CFITSIO was built without CharLS"** — CFITSIO was built
+  with `charls/` missing or empty. Re-run Step 1, then rebuild.
+- **Linux** — steps are identical, except link `-lstdc++` instead of `-lc++`.
