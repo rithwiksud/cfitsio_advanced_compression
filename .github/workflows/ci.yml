@@ -11,7 +11,21 @@ env:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    name: build-windows (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            platform: x64
+            triplet: x64-windows
+          # windows-11-arm is only available to public repositories.
+          - os: windows-11-arm
+            arch: arm64
+            platform: ARM64
+            triplet: arm64-windows
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/vcpkg-cache,readwrite'
@@ -30,23 +44,28 @@ jobs:
       uses: actions/cache@v6
       with:
         path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-        key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+        # runner.arch is what separates the two caches: runner.os is "Windows"
+        # for both, so without it x64 and arm64 would share a single key.
+        key: ${{ runner.os }}-${{ runner.arch }}-vcpkg-${{ hashFiles('vcpkg.json') }}
         restore-keys: |
-          ${{ runner.os }}-vcpkg-
+          ${{ runner.os }}-${{ runner.arch }}-vcpkg-
 
     # 1. Manually install zlib using the built-in vcpkg executable
     - name: Install zlib via vcpkg
       run: |
-        vcpkg install zlib:x64-windows
+        vcpkg install zlib:${{ matrix.triplet }}
 
-    # 2. Configure CMake by passing the toolchain file
+    # 2. Configure CMake by passing the toolchain file.
+    # -A is passed explicitly so the target architecture never depends on the
+    # generator's default for the host.
     - name: Configure CMake
       shell: powershell
       run: >
-        cmake -B ${{github.workspace}}/build 
+        cmake -B ${{github.workspace}}/build
+        -A ${{ matrix.platform }}
         -DUSE_CURL=OFF
         -DCMAKE_BUILD_TYPE=Release
-        -DVCPKG_TARGET_TRIPLET=x64-windows
+        -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
         -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
 
     - name: Build Project

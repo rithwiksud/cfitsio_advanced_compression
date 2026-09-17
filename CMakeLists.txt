@@ -213,7 +213,14 @@ IF(HAVE_SHMEM_SERVICES)
 ENDIF()
 
 IF(WIN32 AND BUILD_SHARED_LIBS)
-    ADD_DEFINITIONS(-Dcfitsio_EXPORTS)
+    IF(TESTS)
+        # The tests/ unit tests call internal helper functions (fits_rcomp,
+        # pl_p2li, simplerng_*, ...) that are not part of the public API.  When
+        # tests are built we export the whole library via WINDOWS_EXPORT_ALL_SYMBOLS
+    ELSE()
+        # Normal build: export only the public API marked with CFITS_API.
+        ADD_DEFINITIONS(-Dcfitsio_EXPORTS)
+    ENDIF()
 ENDIF()
 
 #==============================================================================
@@ -255,6 +262,14 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}")
 #==============================================================================
 
 ADD_LIBRARY(${LIB_NAME} ${LIB_TYPE} ${H_FILES} ${SRC_FILES})
+
+# When building the unit tests, export every symbol from the Windows DLL so the
+# tests (which call internal helper functions) resolve against it, just as they
+# do with the Unix shared library.  Regular builds keep the minimal public
+# export surface (see the cfitsio_EXPORTS handling above).
+IF(WIN32 AND BUILD_SHARED_LIBS AND TESTS)
+    SET_TARGET_PROPERTIES(${LIB_NAME} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+ENDIF()
 
 # Math:
 TARGET_LINK_LIBRARIES(${LIB_NAME} ${M_LIB})
@@ -390,6 +405,23 @@ IF (TESTS)
     ADD_TEST(cookbook cookbook)
 
     install(TARGETS cookbook RUNTIME DESTINATION bin)
+
+    # Unit tests in the tests/ directory (mirrors the autotools tests.am list).
+    # Each tests/test_*.c is a standalone program linked against the library;
+    # registering them here lets `ctest` (e.g. the Windows CI) run them too.
+    FILE(GLOB UNIT_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.c)
+    FOREACH(test_src ${UNIT_TEST_SOURCES})
+        GET_FILENAME_COMPONENT(test_name ${test_src} NAME_WE)
+        ADD_EXECUTABLE(${test_name} ${test_src})
+        TARGET_LINK_LIBRARIES(${test_name} ${LIB_NAME})
+        # test_macros.h and other test headers live in tests/
+        TARGET_INCLUDE_DIRECTORIES(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        ADD_TEST(NAME ${test_name} COMMAND ${test_name})
+        # A test may report itself as skipped with exit code 77 (e.g.
+        # test_drvrsmem when shared-memory services are unavailable), matching
+        # the automake convention; treat that as SKIP rather than failure.
+        SET_TESTS_PROPERTIES(${test_name} PROPERTIES SKIP_RETURN_CODE 77)
+    ENDFOREACH()
 
 ENDIF(TESTS)
 
