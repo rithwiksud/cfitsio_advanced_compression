@@ -318,6 +318,82 @@ If you don't have a test file handy, make one:
 # produces some_image.fits.fz — hand this to your program
 ```
 
+## Option C — install with Homebrew (macOS, simplest)
+
+If the fork is published as a Homebrew tap, the whole of Steps 1-4 collapses
+into one command:
+
+```bash
+brew install rithwiksud/astro/cfitsio
+```
+
+That builds CharLS and CFITSIO, installs `fpack`/`funpack` onto your `PATH`,
+and links `fitsio.h` and `libcfitsio.dylib` into `/opt/homebrew/include` and
+`/opt/homebrew/lib` — the same locations the stock `cfitsio` formula uses.
+
+**Your project's existing link line keeps working unchanged**, with no
+`-lcharls`, no `-lc++`, no rpath:
+
+```bash
+gcc myprogram.c -I/opt/homebrew/include -L/opt/homebrew/lib -lcfitsio -lm -o myprogram
+```
+
+Verified on macOS 26.6 arm64: a program built exactly like that read a
+JPEG-LS file written by `fpack -j`, and the formula's own test does a
+`fpack -j` / `funpack` round-trip and asserts it is bit-for-bit lossless.
+
+### If you already have stock CFITSIO from Homebrew
+
+The two formulae install the same files, so they cannot be installed at
+once. Swap:
+
+```bash
+brew uninstall cfitsio                        # or: brew unlink cfitsio
+brew install rithwiksud/astro/cfitsio
+```
+
+Going back to stock is equally quick:
+
+```bash
+brew uninstall rithwiksud/astro/cfitsio
+brew install cfitsio
+```
+
+Because the fork installs to the same `/opt/homebrew/opt/cfitsio` path and
+keeps the same library version (`SOVERSION 10`, 4.7.0), other Homebrew
+packages that link CFITSIO — `astrometry-net`, `gnuastro`, `healpix`,
+`montage` and ~30 others — continue to resolve the library. The fork is a
+strict superset of upstream, so they keep working; this has not been
+tested package by package, so check anything you rely on.
+
+### Programs do not need rebuilding to *read* JPEG-LS
+
+Swapping the library is enough. A program compiled against stock CFITSIO,
+never recompiled, went from failing with
+
+```
+FITSIO status = 414: Unknown image compression type
+```
+
+to reading the same JPEG-LS file correctly, purely because the library
+underneath it changed. Reading dispatches on `ZCMPTYPE` inside the library,
+so no API or recompile is involved.
+
+*Writing* JPEG-LS is different: `JPEGLS_1` and `fits_set_jpegls_maxerr()`
+do not exist in stock `fitsio.h`, so code that creates JPEG-LS files must be
+rebuilt against the new header.
+
+### Caveats
+
+- **No bottles**, unless the tap sets up CI to build them, so every install
+  compiles from source (about a minute, plus CMake). Xcode command line
+  tools are required.
+- **Python tooling is unaffected.** Astropy does not link `libcfitsio` (it
+  has its own compression code), and the PyPI `fitsio` package vendors its
+  own copy. Neither notices this swap.
+- **Linux** users can use the same tap via Homebrew on Linux, but building
+  from source with the guide's Steps 1-3 is the more usual route.
+
 ## Can I just hand someone a prebuilt `libcfitsio` dylib?
 
 Tempting — it is what you would do for embedded firmware — but a macOS
